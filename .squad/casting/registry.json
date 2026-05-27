@@ -1,0 +1,61 @@
+{
+  "agents": {
+    "ben-gurion": {
+      "displayName": "Ben-Gurion",
+      "role": "Lead / Architect",
+      "emoji": "🏗️",
+      "universe": "Israeli government (historical)",
+      "status": "active"
+    },
+    "peres": {
+      "displayName": "Peres",
+      "role": "Backend Developer",
+      "emoji": "🔧",
+      "universe": "Israeli government (historical, tech-forward)",
+      "status": "active"
+    },
+    "lapid": {
+      "displayName": "Lapid",
+      "role": "Frontend Developer",
+      "emoji": "⚛️",
+      "universe": "Israeli government (current)",
+      "status": "active"
+    },
+    "gantz": {
+      "displayName": "Gantz",
+      "role": "DevOps Engineer",
+      "emoji": "⚙️",
+      "universe": "Israeli government (current)",
+      "status": "active"
+    },
+    "bennett": {
+      "displayName": "Bennett",
+      "role": "Tester / QA",
+      "emoji": "🧪",
+      "universe": "Israeli government (current)",
+      "status": "active"
+    },
+    "eddy": {
+      "displayName": "Eddy Ukstein",
+      "role": "Human — Customer Focal Point / Approver",
+      "emoji": "👤",
+      "universe": "Human team member",
+      "status": "human",
+      "upn": "eddyukstein@microsoft.com"
+    },
+    "scribe": {
+      "displayName": "Scribe",
+      "role": "Documentation",
+      "emoji": "📋",
+      "universe": "Reserved",
+      "status": "active"
+    },
+    "ralph": {
+      "displayName": "Ralph",
+      "role": "Work Queue Monitor",
+      "emoji": "🔄",
+      "universe": "Reserved",
+      "status": "active"
+    }
+  }
+}
