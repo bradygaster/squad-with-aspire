@@ -18,6 +18,7 @@ public sealed class CoordinatorService : BackgroundService
     private static readonly ActivitySource ActivitySource = new("Squad.Coordinator", "1.0.0");
 
     private readonly ISquadMessageBus _bus;
+    private readonly ISquadConfigStore _config;
     private readonly IServiceProvider _services;
     private readonly ILogger<CoordinatorService> _logger;
 
@@ -33,9 +34,10 @@ public sealed class CoordinatorService : BackgroundService
         "qa-squad",
     ];
 
-    public CoordinatorService(ISquadMessageBus bus, IServiceProvider services, ILogger<CoordinatorService> logger)
+    public CoordinatorService(ISquadMessageBus bus, ISquadConfigStore config, IServiceProvider services, ILogger<CoordinatorService> logger)
     {
         _bus = bus;
+        _config = config;
         _services = services;
         _logger = logger;
     }
@@ -148,6 +150,9 @@ public sealed class CoordinatorService : BackgroundService
 
     private async Task<string> BuildContextualPrompt(string squadName, SquadMessage message, CancellationToken ct)
     {
+        // Fetch the target repo so agents operate on the right repository
+        var targetRepo = await _config.GetAsync("target-repo", ct);
+
         // Pull recent chat history from the bus for context
         var recentMessages = await _bus.GetRecentAsync(20, ct);
 
@@ -156,13 +161,24 @@ public sealed class CoordinatorService : BackgroundService
             .Select(m => $"[{m.From} → {m.To}]: {m.Body}")
             .ToList();
 
+        var repoInstruction = string.IsNullOrWhiteSpace(targetRepo)
+            ? ""
+            : $"""
+            IMPORTANT: You are working on GitHub repository "{targetRepo}". ALL GitHub operations (creating issues, pull requests, code changes, reading files) MUST target this repo. Do NOT create issues or PRs in any other repository. When using gh CLI, always pass --repo {targetRepo}.
+
+            """;
+
         if (history.Count == 0)
-            return message.Body;
+            return $"""
+            {repoInstruction}Respond as {squadName}. You can use the squad_send_message tool to ask questions back to the user (to="user") or to message other squads directly.
+
+            {message.Body}
+            """;
 
         var contextBlock = string.Join("\n", history.TakeLast(15));
 
         return $"""
-            Here is the recent chat history for context:
+            {repoInstruction}Here is the recent chat history for context:
             ---
             {contextBlock}
             ---
