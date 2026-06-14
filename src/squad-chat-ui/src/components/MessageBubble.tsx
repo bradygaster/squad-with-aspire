@@ -1,10 +1,22 @@
-import type { CSSProperties } from 'react'
+import { useMemo, type CSSProperties } from 'react'
+import DOMPurify from 'dompurify'
+import { marked } from 'marked'
 import type { SquadMessage } from '../types'
 
 interface MessageBubbleProps {
   message: SquadMessage;
   accentColor: string;
   targetColor?: string;
+}
+
+// Detect if content is already HTML (starts with a tag)
+function isHtml(text: string): boolean {
+  return /^\s*<[a-z][\s\S]*>/i.test(text.trim())
+}
+
+function renderBody(body: string): string {
+  const raw = isHtml(body) ? body : marked.parse(body, { async: false }) as string
+  return DOMPurify.sanitize(raw)
 }
 
 export function MessageBubble({ message, accentColor, targetColor }: MessageBubbleProps) {
@@ -20,6 +32,8 @@ export function MessageBubble({ message, accentColor, targetColor }: MessageBubb
         hour: 'numeric',
         minute: '2-digit',
       }).format(parsedDate)
+
+  const renderedBody = useMemo(() => renderBody(message.body), [message.body])
 
   const bubbleStyle = {
     '--accent-color': accentColor,
@@ -63,7 +77,10 @@ export function MessageBubble({ message, accentColor, targetColor }: MessageBubb
         {message.subject !== 'chat' ? (
           <div className="message-subject">{message.subject}</div>
         ) : null}
-        <p className="message-body">{message.body}</p>
+        <div
+          className="message-body"
+          dangerouslySetInnerHTML={{ __html: renderedBody }}
+        />
       </article>
     </div>
   )
