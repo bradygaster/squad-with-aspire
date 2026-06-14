@@ -3,6 +3,10 @@ using Aspire.Hosting;
 using BrutalGames.MessagingApi;
 using Microsoft.Extensions.AI;
 using OpenAI;
+using OpenTelemetry;
+
+// Allow gRPC over HTTP/2 without TLS for OTLP export (Aspire dev cert)
+AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -25,13 +29,14 @@ builder.Services.AddHostedService<CoordinatorService>();
 // LLM-powered responder for real-time chat replies
 builder.Services.AddHostedService<SquadResponderService>();
 
-// OpenTelemetry: export Squad.Messaging and Squad.Config traces to the Aspire dashboard
-builder.Services.AddOpenTelemetry()
+// OpenTelemetry: export traces to the Aspire dashboard via OTLP
+var otel = builder.Services.AddOpenTelemetry()
     .WithTracing(tracing => tracing
         .AddSource(SquadMessagingServiceExtensions.ActivitySourceName)
         .AddSource(SquadMessagingServiceExtensions.ConfigActivitySourceName)
         .AddSource("Squad.Coordinator")
         .AddSource("Squad.Responder"));
+otel.UseOtlpExporter();
 
 // CORS for the chat UI
 builder.Services.AddCors(options =>
