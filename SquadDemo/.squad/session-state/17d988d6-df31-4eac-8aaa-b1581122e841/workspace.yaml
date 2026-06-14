@@ -1,0 +1,12 @@
+id: 17d988d6-df31-4eac-8aaa-b1581122e841
+cwd: C:\Users\bradyg\OneDrive - Microsoft\Presentations\copilot-worktrees\squad-with-aspire\bradygaster-animated-parakeet\SquadDemo
+git_root: C:\Users\bradyg\OneDrive - Microsoft\Presentations\copilot-worktrees\squad-with-aspire\bradygaster-animated-parakeet
+repository: bradygaster/squad-with-aspire
+host_type: github
+branch: bradygaster/aspire-squad-tutorial
+name: Team fan out and each of you describe your role in one sentence. Your responses should be concatenated into an array of JSON objects that represent each agent with 3 properties - Name, Role, and Charter. If there are no agents, respond with an empty array. Your *entire* response should be a JSON array of objects, and nothing else. Do not include any text outside of the JSON array.
+client_name: sdk
+user_named: false
+summary_count: 0
+created_at: 2026-06-14T02:32:52.832Z
+updated_at: 2026-06-14T02:32:54.841Z
