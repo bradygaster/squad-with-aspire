@@ -43,6 +43,12 @@ public static class SquadMessagingEndpoints
             return Results.Ok(messages);
         });
 
+        group.MapGet("/recent", async (int? limit, ISquadMessageBus bus, CancellationToken ct) =>
+        {
+            var messages = await bus.GetRecentAsync(limit ?? 50, ct);
+            return Results.Ok(messages);
+        });
+
         group.MapPost("/{messageId}/reply", async (string messageId, ReplyMessageRequest req, ISquadMessageBus bus, CancellationToken ct) =>
         {
             var reply = await bus.ReplyAsync(messageId, req.From, req.Body, ct);

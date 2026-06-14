@@ -162,6 +162,30 @@ public sealed class SqliteSquadMessageBus : ISquadMessageBus, IDisposable
         return messages;
     }
 
+    public async Task<IReadOnlyList<SquadMessage>> GetRecentAsync(int limit = 50, CancellationToken ct = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        using var activity = ActivitySource.StartActivity("squad.messages.recent", ActivityKind.Consumer);
+        activity?.SetTag("messaging.system", "squad-bus");
+        activity?.SetTag("messaging.limit", limit);
+
+        await using var connection = await OpenConnectionAsync(ct).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            SELECT id, from_squad, to_squad, subject, body, correlation_id, reply_to, timestamp, is_read, trace_id, span_id
+            FROM messages
+            ORDER BY timestamp DESC
+            LIMIT @limit;
+            """;
+        command.Parameters.AddWithValue("@limit", limit);
+
+        var messages = await ReadMessagesAsync(command, ct).ConfigureAwait(false);
+        activity?.SetTag("messaging.message_count", messages.Count);
+        return messages;
+    }
+
     public async Task<IReadOnlyList<SquadMessage>> GetConversationAsync(string correlationId, CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
