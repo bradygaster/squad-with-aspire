@@ -23,6 +23,7 @@ builder.Services.AddKeyedSquadAgent("research-and-ideation-squad", options =>
 {
     options.ConfigureSession = session =>
     {
+        session.McpServers ??= new Dictionary<string, McpServerConfig>();
         session.McpServers.Add("squad-bus", new McpStdioServerConfig
         {
             Command = "node",
@@ -36,6 +37,7 @@ builder.Services.AddKeyedSquadAgent("site-design-squad", options =>
 {
     options.ConfigureSession = session =>
     {
+        session.McpServers ??= new Dictionary<string, McpServerConfig>();
         session.McpServers.Add("squad-bus", new McpStdioServerConfig
         {
             Command = "node",
@@ -49,6 +51,7 @@ builder.Services.AddKeyedSquadAgent("game-development-squad", options =>
 {
     options.ConfigureSession = session =>
     {
+        session.McpServers ??= new Dictionary<string, McpServerConfig>();
         session.McpServers.Add("squad-bus", new McpStdioServerConfig
         {
             Command = "node",
@@ -62,6 +65,7 @@ builder.Services.AddKeyedSquadAgent("qa-squad", options =>
 {
     options.ConfigureSession = session =>
     {
+        session.McpServers ??= new Dictionary<string, McpServerConfig>();
         session.McpServers.Add("squad-bus", new McpStdioServerConfig
         {
             Command = "node",
