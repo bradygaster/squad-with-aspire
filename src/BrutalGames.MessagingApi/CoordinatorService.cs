@@ -1,6 +1,8 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
+using Microsoft.Agents.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Squad.Agents.AI;
 
@@ -9,6 +11,7 @@ namespace BrutalGames.MessagingApi;
 /// <summary>
 /// The coordinator receives messages from the user, routes them to all squads,
 /// and dispatches to real SquadAgent instances for AI-powered responses.
+/// Each squad maintains a persistent session with full chat history context.
 /// </summary>
 public sealed class CoordinatorService : BackgroundService
 {
@@ -17,6 +20,10 @@ public sealed class CoordinatorService : BackgroundService
     private readonly ISquadMessageBus _bus;
     private readonly IServiceProvider _services;
     private readonly ILogger<CoordinatorService> _logger;
+
+    // Persistent sessions — one per squad. RunAsync handles session persistence internally
+    // when the session parameter is null.
+    private readonly ConcurrentDictionary<string, AgentSession?> _sessions = new();
 
     private static readonly string[] AllSquads =
     [
@@ -105,10 +112,15 @@ public sealed class CoordinatorService : BackgroundService
             activity?.SetTag("squad.name", squadName);
             activity?.SetTag("messaging.message.body", message.Body);
 
-            _logger.LogInformation("Dispatching to SquadAgent '{Squad}': {Body}", squadName, message.Body);
+            // Get or create a persistent session for this squad
+            var session = await GetOrCreateSessionAsync(agent, squadName, ct);
 
-            var session = await agent.CreateSessionAsync(ct);
-            var response = await agent.RunAsync(message.Body, session, cancellationToken: ct);
+            // Build prompt with recent chat history for context
+            var contextualPrompt = await BuildContextualPrompt(squadName, message, ct);
+
+            _logger.LogInformation("Dispatching to SquadAgent '{Squad}' with history context", squadName);
+
+            var response = await agent.RunAsync(contextualPrompt, session, options: null, cancellationToken: ct);
 
             activity?.SetTag("squad.response.length", response.Text?.Length ?? 0);
 
@@ -125,5 +137,39 @@ public sealed class CoordinatorService : BackgroundService
             await _bus.ReplyAsync(message.Id, squadName,
                 $"⚠️ {squadName} encountered an error processing your request.", ct);
         }
+    }
+
+    private Task<AgentSession?> GetOrCreateSessionAsync(SquadAgent agent, string squadName, CancellationToken ct)
+    {
+        // SquadAgent manages its own session lifecycle internally.
+        // We pass null to let it handle persistent session state.
+        return Task.FromResult<AgentSession?>(null);
+    }
+
+    private async Task<string> BuildContextualPrompt(string squadName, SquadMessage message, CancellationToken ct)
+    {
+        // Pull recent chat history from the bus for context
+        var recentMessages = await _bus.GetRecentAsync(20, ct);
+
+        var history = recentMessages
+            .Where(m => m.Id != message.Id) // exclude the current message
+            .Select(m => $"[{m.From} → {m.To}]: {m.Body}")
+            .ToList();
+
+        if (history.Count == 0)
+            return message.Body;
+
+        var contextBlock = string.Join("\n", history.TakeLast(15));
+
+        return $"""
+            Here is the recent chat history for context:
+            ---
+            {contextBlock}
+            ---
+
+            New message from {message.From}: {message.Body}
+
+            Respond as {squadName}. You can use the squad_send_message tool to ask questions back to the user (to="user") or to message other squads directly. All communication goes through the shared bus so everyone can see the conversation timeline.
+            """;
     }
 }

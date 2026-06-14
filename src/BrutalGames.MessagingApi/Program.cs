@@ -1,5 +1,6 @@
 using Aspire.Hosting;
 using BrutalGames.MessagingApi;
+using GitHub.Copilot;
 using OpenTelemetry;
 using Squad.Agents.AI;
 
@@ -15,10 +16,60 @@ builder.Services.AddSquadMessaging(dbPath);
 
 // Register real SquadAgent instances (one per squad) via keyed DI.
 // Connection strings are injected by Aspire AppHost via WithReference().
-builder.Services.AddKeyedSquadAgent("research-and-ideation-squad");
-builder.Services.AddKeyedSquadAgent("site-design-squad");
-builder.Services.AddKeyedSquadAgent("game-development-squad");
-builder.Services.AddKeyedSquadAgent("qa-squad");
+// Each agent gets the messaging bus MCP tools so they can talk to other squads and the user.
+var extensionPath = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "..", ".github", "extensions", "squad-messaging", "extension.mjs"));
+
+builder.Services.AddKeyedSquadAgent("research-and-ideation-squad", options =>
+{
+    options.ConfigureSession = session =>
+    {
+        session.McpServers.Add("squad-bus", new McpStdioServerConfig
+        {
+            Command = "node",
+            Args = [extensionPath],
+            Env = new Dictionary<string, string> { ["MESSAGING_API_URL"] = "http://localhost:5001" },
+        });
+    };
+});
+
+builder.Services.AddKeyedSquadAgent("site-design-squad", options =>
+{
+    options.ConfigureSession = session =>
+    {
+        session.McpServers.Add("squad-bus", new McpStdioServerConfig
+        {
+            Command = "node",
+            Args = [extensionPath],
+            Env = new Dictionary<string, string> { ["MESSAGING_API_URL"] = "http://localhost:5001" },
+        });
+    };
+});
+
+builder.Services.AddKeyedSquadAgent("game-development-squad", options =>
+{
+    options.ConfigureSession = session =>
+    {
+        session.McpServers.Add("squad-bus", new McpStdioServerConfig
+        {
+            Command = "node",
+            Args = [extensionPath],
+            Env = new Dictionary<string, string> { ["MESSAGING_API_URL"] = "http://localhost:5001" },
+        });
+    };
+});
+
+builder.Services.AddKeyedSquadAgent("qa-squad", options =>
+{
+    options.ConfigureSession = session =>
+    {
+        session.McpServers.Add("squad-bus", new McpStdioServerConfig
+        {
+            Command = "node",
+            Args = [extensionPath],
+            Env = new Dictionary<string, string> { ["MESSAGING_API_URL"] = "http://localhost:5001" },
+        });
+    };
+});
 
 // Squad coordinator routes user messages to all squads and dispatches to SquadAgents
 builder.Services.AddHostedService<CoordinatorService>();
