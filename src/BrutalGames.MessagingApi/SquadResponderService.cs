@@ -157,8 +157,25 @@ public sealed class SquadResponderService : BackgroundService
                    $"Just tell us what you need!";
         }
 
-        // Creative/fun requests — give unique per-squad answers
-        if (body.Contains("haiku") || body.Contains("poem") || body.Contains("joke") || body.Contains("fun"))
+        // Jokes
+        if (body.Contains("joke") || body.Contains("knock"))
+        {
+            return personality.DisplayName switch
+            {
+                "Research & Ideation" =>
+                    "😂 Knock knock!\n— Who's there?\n— Data.\n— Data who?\n— Data be validated before we ship it!",
+                "Site Design" =>
+                    "😂 Knock knock!\n— Who's there?\n— Pixel.\n— Pixel who?\n— Pixel your battles — not every div needs a border!",
+                "Game Development" =>
+                    "😂 Knock knock!\n— Who's there?\n— Game loop.\n— Game loop who?\n— Game loop who never ends… Game loop who never ends… Game loop who—",
+                "QA" =>
+                    "😂 Knock knock!\n— Who's there?\n— Bug.\n— Bug who?\n— Bug-ger off, we just passed all the tests!",
+                _ => "😂 We'd tell you a joke, but our humor module is still in beta!",
+            };
+        }
+
+        // Haiku/poem/creative requests
+        if (body.Contains("haiku") || body.Contains("poem") || body.Contains("fun") || body.Contains("creative"))
         {
             return personality.DisplayName switch
             {
