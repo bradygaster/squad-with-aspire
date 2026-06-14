@@ -68,10 +68,14 @@ public static class SquadMessagingEndpoints
             context.Response.Headers.Connection = "keep-alive";
 
             var targetSquad = squad ?? "*";
+            var jsonOptions = new System.Text.Json.JsonSerializerOptions
+            {
+                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+            };
 
             await foreach (var message in bus.SubscribeAsync(targetSquad, ct))
             {
-                var json = System.Text.Json.JsonSerializer.Serialize(message);
+                var json = System.Text.Json.JsonSerializer.Serialize(message, jsonOptions);
                 await context.Response.WriteAsync($"data: {json}\n\n", ct);
                 await context.Response.Body.FlushAsync(ct);
             }

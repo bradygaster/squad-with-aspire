@@ -334,7 +334,7 @@ public sealed class SqliteSquadMessageBus : ISquadMessageBus, IDisposable
             Timestamp = DateTime.Parse(
                 reader.GetString(7),
                 null,
-                System.Globalization.DateTimeStyles.RoundtripKind | System.Globalization.DateTimeStyles.AssumeUniversal),
+                System.Globalization.DateTimeStyles.RoundtripKind),
             IsRead = reader.GetInt64(8) != 0,
             TraceId = reader.IsDBNull(9) ? null : reader.GetString(9),
             SpanId = reader.IsDBNull(10) ? null : reader.GetString(10),
