@@ -24,6 +24,12 @@ const KNOWN_SQUADS = [
   'qa-squad',
 ] as const
 
+type KnownSquad = (typeof KNOWN_SQUADS)[number]
+
+function isKnownSquad(name: string): name is KnownSquad {
+  return KNOWN_SQUADS.includes(name as KnownSquad)
+}
+
 const DIRECT_SQUAD_PATTERN = new RegExp(
   `^@(${KNOWN_SQUADS.map((squad) => squad.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\b\\s*(.*)$`,
   'i',
@@ -55,14 +61,20 @@ function createLocalMessage(
 
 function App() {
   const [targetRepo, setTargetRepo] = useState<string | null>(null)
+  const [sentMessages, setSentMessages] = useState<SquadMessage[]>([])
+  const [isSending, setIsSending] = useState(false)
+  const [waitingForResponse, setWaitingForResponse] = useState(false)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [now, setNow] = useState(() => Date.now())
+  const handleStreamMessages = useCallback((incomingMessages: SquadMessage[]) => {
+    if (incomingMessages.some((message) => isKnownSquad(message.from))) {
+      setWaitingForResponse(false)
+    }
+  }, [])
   const {
     messages: streamedMessages,
     clearMessages: clearStreamedMessages,
-  } = useMessageStream()
-  const [sentMessages, setSentMessages] = useState<SquadMessage[]>([])
-  const [isSending, setIsSending] = useState(false)
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [now, setNow] = useState(() => Date.now())
+  } = useMessageStream(handleStreamMessages)
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -86,7 +98,7 @@ function App() {
         // Show coordinator's acknowledgment (TO user)
         if (msg.from === 'coordinator' && msg.to === 'user') return true
         // Show squad replies (TO user or TO coordinator, i.e. replies up the chain)
-        if (KNOWN_SQUADS.includes(msg.from as (typeof KNOWN_SQUADS)[number])) return true
+        if (isKnownSquad(msg.from)) return true
         // Hide coordinator-to-squad routing (internal dispatch)
         return false
       }),
@@ -127,6 +139,7 @@ function App() {
         await clearMessagesApi()
         clearStreamedMessages()
         setSentMessages([])
+        setWaitingForResponse(false)
         return
       }
 
@@ -140,6 +153,7 @@ function App() {
         setSentMessages((currentMessages) =>
           mergeMessages([...currentMessages, squadsMessage]),
         )
+        setWaitingForResponse(false)
         return
       }
 
@@ -156,11 +170,13 @@ function App() {
         }
       }
 
+      setWaitingForResponse(true)
       const createdMessage = await sendMessage('user', destination, 'chat', outboundBody)
       setSentMessages((currentMessages) =>
         mergeMessages([...currentMessages, createdMessage]),
       )
     } catch (error) {
+      setWaitingForResponse(false)
       const detail = error instanceof Error ? error.message : 'Unknown error'
       setErrorMessage(`Unable to send message. ${detail}`)
     } finally {
@@ -187,7 +203,11 @@ function App() {
       <SquadPresenceBar squads={squads} />
 
       <main className="app-main">
-        <ChatThread messages={messages} squadColors={SQUAD_COLORS} />
+        <ChatThread
+          isWaiting={waitingForResponse}
+          messages={messages}
+          squadColors={SQUAD_COLORS}
+        />
       </main>
 
       {errorMessage ? <div className="app-error">{errorMessage}</div> : null}

@@ -9,7 +9,7 @@ namespace Aspire.Hosting;
 
 public sealed class SqliteSquadMessageBus : ISquadMessageBus, IDisposable
 {
-    private static readonly ActivitySource ActivitySource = new("Squad.Messaging", "1.0.0");
+    private static readonly ActivitySource ActivitySource = new(SquadMessagingServiceExtensions.ActivitySourceName, "1.0.0");
 
     private readonly string _connectionString;
 
@@ -68,6 +68,8 @@ public sealed class SqliteSquadMessageBus : ISquadMessageBus, IDisposable
         activity?.SetTag("messaging.source.name", message.From);
         activity?.SetTag("messaging.message.id", message.Id);
         activity?.SetTag("messaging.message.subject", message.Subject);
+        activity?.SetTag("squad.message.to", message.To);
+        activity?.SetTag("squad.message.from", message.From);
         activity?.SetTag("messaging.correlation_id", message.CorrelationId);
 
         // Stamp trace context onto the message for downstream consumers
@@ -95,6 +97,18 @@ public sealed class SqliteSquadMessageBus : ISquadMessageBus, IDisposable
         var originalMessage = await GetMessageByIdAsync(originalMessageId, ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Message '{originalMessageId}' was not found.");
 
+        var reply = new SquadMessage
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            From = fromSquad,
+            To = originalMessage.From,
+            Subject = originalMessage.Subject,
+            Body = body,
+            CorrelationId = originalMessage.CorrelationId ?? originalMessage.Id,
+            ReplyTo = originalMessage.Id,
+            Timestamp = DateTime.UtcNow,
+        };
+
         // Link this reply's trace to the original message's trace
         var links = new List<ActivityLink>();
         if (originalMessage.TraceId is not null && originalMessage.SpanId is not null
@@ -113,20 +127,15 @@ public sealed class SqliteSquadMessageBus : ISquadMessageBus, IDisposable
         activity?.SetTag("messaging.system", "squad-bus");
         activity?.SetTag("messaging.destination.name", originalMessage.From);
         activity?.SetTag("messaging.source.name", fromSquad);
+        activity?.SetTag("messaging.message.id", reply.Id);
+        activity?.SetTag("messaging.message.subject", reply.Subject);
         activity?.SetTag("messaging.reply_to", originalMessageId);
         activity?.SetTag("messaging.correlation_id", originalMessage.CorrelationId ?? originalMessage.Id);
-
-        var reply = new SquadMessage
-        {
-            Id = Guid.NewGuid().ToString("N"),
-            From = fromSquad,
-            To = originalMessage.From,
-            Subject = originalMessage.Subject,
-            Body = body,
-            CorrelationId = originalMessage.CorrelationId ?? originalMessage.Id,
-            ReplyTo = originalMessage.Id,
-            Timestamp = DateTime.UtcNow,
-        };
+        activity?.SetTag("messaging.parent_message.id", originalMessage.Id);
+        activity?.SetTag("messaging.parent_message.from", originalMessage.From);
+        activity?.SetTag("messaging.parent_message.to", originalMessage.To);
+        activity?.SetTag("messaging.parent_trace.id", originalMessage.TraceId);
+        activity?.SetTag("messaging.parent_span.id", originalMessage.SpanId);
 
         await SendAsync(reply, ct).ConfigureAwait(false);
         return reply;
@@ -142,6 +151,7 @@ public sealed class SqliteSquadMessageBus : ISquadMessageBus, IDisposable
             ActivityKind.Consumer);
         activity?.SetTag("messaging.system", "squad-bus");
         activity?.SetTag("messaging.destination.name", squadName);
+        activity?.SetTag("squad.name", squadName);
         activity?.SetTag("messaging.unread_only", unreadOnly);
 
         await using var connection = await OpenConnectionAsync(ct).ConfigureAwait(false);
@@ -239,7 +249,8 @@ public sealed class SqliteSquadMessageBus : ISquadMessageBus, IDisposable
         await using var connection = await OpenConnectionAsync(ct).ConfigureAwait(false);
         await using var command = connection.CreateCommand();
         command.CommandText = "DELETE FROM messages;";
-        await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        var deletedCount = await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        activity?.SetTag("messaging.message_count", deletedCount);
     }
 
     public async IAsyncEnumerable<SquadMessage> SubscribeAsync(string squadName, [EnumeratorCancellation] CancellationToken ct = default)

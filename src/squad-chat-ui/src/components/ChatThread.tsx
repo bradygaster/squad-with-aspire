@@ -5,9 +5,10 @@ import { MessageBubble } from './MessageBubble'
 interface ChatThreadProps {
   messages: SquadMessage[];
   squadColors: Record<string, string>;
+  isWaiting: boolean;
 }
 
-export function ChatThread({ messages, squadColors }: ChatThreadProps) {
+export function ChatThread({ messages, squadColors, isWaiting }: ChatThreadProps) {
   const bottomAnchorRef = useRef<HTMLDivElement | null>(null)
 
   const sortedMessages = useMemo(
@@ -20,7 +21,7 @@ export function ChatThread({ messages, squadColors }: ChatThreadProps) {
 
   useEffect(() => {
     bottomAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [sortedMessages])
+  }, [isWaiting, sortedMessages])
 
   return (
     <section className="chat-thread" aria-label="Conversation thread">
@@ -35,9 +36,20 @@ export function ChatThread({ messages, squadColors }: ChatThreadProps) {
             key={message.id}
             message={message}
             accentColor={squadColors[message.from] ?? squadColors[message.to] ?? '#6ea8fe'}
+            targetColor={squadColors[message.to]}
           />
         ))
       )}
+      {isWaiting ? (
+        <div className="thinking-indicator" role="status" aria-live="polite">
+          <div className="thinking-indicator__dots" aria-hidden="true">
+            <span className="thinking-indicator__dot" />
+            <span className="thinking-indicator__dot" />
+            <span className="thinking-indicator__dot" />
+          </div>
+          <span>Squads are thinking...</span>
+        </div>
+      ) : null}
       <div ref={bottomAnchorRef} />
     </section>
   )

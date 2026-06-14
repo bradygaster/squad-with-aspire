@@ -21,7 +21,9 @@ function mergeMessages(
   )
 }
 
-export function useMessageStream() {
+export function useMessageStream(
+  onMessagesReceived?: (messages: SquadMessage[]) => void,
+) {
   const [messages, setMessages] = useState<SquadMessage[]>([])
   const clearMessages = useCallback(() => {
     setMessages([])
@@ -67,6 +69,7 @@ export function useMessageStream() {
               ? [payload.message]
               : [payload]
 
+          onMessagesReceived?.(incomingMessages)
           setMessages((currentMessages) =>
             mergeMessages(currentMessages, incomingMessages),
           )
@@ -92,7 +95,7 @@ export function useMessageStream() {
         window.clearTimeout(reconnectTimer)
       }
     }
-  }, [])
+  }, [onMessagesReceived])
 
   return { messages, clearMessages }
 }

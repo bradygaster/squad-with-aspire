@@ -211,6 +211,13 @@ button {
   margin-bottom: 0.55rem;
 }
 
+.message-bubble__meta-main {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
 .message-badge {
   display: inline-flex;
   align-items: center;
@@ -226,6 +233,16 @@ button {
   color: #98a4cf;
 }
 
+.message-direct-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.18rem 0.5rem;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
 .message-subject {
   margin-bottom: 0.35rem;
   font-size: 0.88rem;
@@ -238,6 +255,37 @@ button {
   white-space: pre-wrap;
   word-break: break-word;
   color: #f5f7ff;
+}
+
+.thinking-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.7rem;
+  padding: 0.55rem 0;
+  color: #b7bfdc;
+}
+
+.thinking-indicator__dots {
+  display: inline-flex;
+  gap: 0.3rem;
+}
+
+.thinking-indicator__dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: #9b87f5;
+  opacity: 0.35;
+  animation: dot-pulse 1.2s infinite ease-in-out;
+}
+
+.thinking-indicator__dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.thinking-indicator__dot:nth-child(3) {
+  animation-delay: 0.4s;
 }
 
 .compose-bar {
@@ -399,6 +447,20 @@ button {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes dot-pulse {
+  0%,
+  80%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+
+  40% {
+    opacity: 1;
+    transform: translateY(-2px);
   }
 }
 
