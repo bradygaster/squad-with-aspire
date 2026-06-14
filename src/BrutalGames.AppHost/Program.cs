@@ -7,6 +7,13 @@ var repoRoot = Path.GetFullPath(Path.Combine(builder.AppHostDirectory, "..", "..
 var messagingApi = builder.AddProject<Projects.BrutalGames_MessagingApi>("messaging-api")
     .WithEnvironment("SQUAD_MESSAGES_DB", Path.Combine(repoRoot, "squad-messages.db"));
 
+// Chat UI (React + Vite) — proxies /api to messaging-api
+builder.AddNpmApp("squad-chat", Path.Combine(repoRoot, "src", "squad-chat-ui"), "dev")
+    .WithReference(messagingApi)
+    .WaitFor(messagingApi)
+    .WithHttpEndpoint(env: "PORT", port: 5173)
+    .WithExternalHttpEndpoints();
+
 // Each squad is its own siloed resource in the Aspire topology.
 builder.AddSquad("research-and-ideation-squad",
     teamRoot: Path.Combine(repoRoot, "squads", "research-and-ideation"));
