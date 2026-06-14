@@ -29,6 +29,13 @@ export async function sendMessage(
   return parseJsonResponse<SquadMessage>(response)
 }
 
+export async function clearMessages(): Promise<void> {
+  const response = await fetch(buildUrl('/api/messages'), { method: 'DELETE' })
+  if (!response.ok) {
+    throw new Error(`Failed to clear: ${response.status}`)
+  }
+}
+
 export async function getInbox(
   squadName: string,
   unreadOnly = false,

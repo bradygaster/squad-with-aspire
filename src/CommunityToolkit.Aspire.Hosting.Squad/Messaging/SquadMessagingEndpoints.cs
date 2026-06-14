@@ -37,6 +37,12 @@ public static class SquadMessagingEndpoints
             return Results.Created($"/api/messages/{message.Id}", message);
         });
 
+        group.MapDelete("/", async (ISquadMessageBus bus, CancellationToken ct) =>
+        {
+            await bus.ClearAllAsync(ct);
+            return Results.NoContent();
+        });
+
         group.MapGet("/{squadName}/inbox", async (string squadName, bool? unreadOnly, ISquadMessageBus bus, CancellationToken ct) =>
         {
             var messages = await bus.GetInboxAsync(squadName, unreadOnly ?? false, ct);

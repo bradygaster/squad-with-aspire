@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { API_BASE_URL } from '../api'
 import type { SquadMessage } from '../types'
 
@@ -23,6 +23,9 @@ function mergeMessages(
 
 export function useMessageStream() {
   const [messages, setMessages] = useState<SquadMessage[]>([])
+  const clearMessages = useCallback(() => {
+    setMessages([])
+  }, [])
 
   useEffect(() => {
     let eventSource: EventSource | null = null
@@ -91,5 +94,5 @@ export function useMessageStream() {
     }
   }, [])
 
-  return { messages }
+  return { messages, clearMessages }
 }

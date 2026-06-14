@@ -229,6 +229,19 @@ public sealed class SqliteSquadMessageBus : ISquadMessageBus, IDisposable
         await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 
+    public async Task ClearAllAsync(CancellationToken ct = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        using var activity = ActivitySource.StartActivity("squad.messages.clear", ActivityKind.Internal);
+        activity?.SetTag("messaging.system", "squad-bus");
+
+        await using var connection = await OpenConnectionAsync(ct).ConfigureAwait(false);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM messages;";
+        await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
+
     public async IAsyncEnumerable<SquadMessage> SubscribeAsync(string squadName, [EnumeratorCancellation] CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
