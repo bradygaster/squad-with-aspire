@@ -14,4 +14,8 @@
     <ProjectReference Include="..\BrutalGames.MessagingApi\BrutalGames.MessagingApi.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.NodeJs" Version="9.5.2" />
+  </ItemGroup>
+
 </Project>

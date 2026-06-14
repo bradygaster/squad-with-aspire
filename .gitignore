@@ -1,0 +1,27 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.dll
+*.pdb
+*.exe
+
+## Node
+node_modules/
+dist/
+
+## SQLite
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+## IDE
+.vs/
+.vscode/
+.idea/
+
+## Aspire
+aspire.config.json
