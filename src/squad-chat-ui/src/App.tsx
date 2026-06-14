@@ -43,7 +43,17 @@ function App() {
   }, [])
 
   const messages = useMemo(
-    () => mergeMessages([...streamedMessages, ...sentMessages]),
+    () =>
+      mergeMessages([...streamedMessages, ...sentMessages]).filter((msg) => {
+        // Show messages FROM the user
+        if (msg.from === 'user') return true
+        // Show coordinator's acknowledgment (TO user)
+        if (msg.from === 'coordinator' && msg.to === 'user') return true
+        // Show squad replies (TO user or TO coordinator, i.e. replies up the chain)
+        if (KNOWN_SQUADS.includes(msg.from as (typeof KNOWN_SQUADS)[number])) return true
+        // Hide coordinator-to-squad routing (internal dispatch)
+        return false
+      }),
     [sentMessages, streamedMessages],
   )
 
