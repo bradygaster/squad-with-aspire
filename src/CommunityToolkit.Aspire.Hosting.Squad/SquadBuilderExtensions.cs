@@ -1,5 +1,6 @@
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Lifecycle;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Aspire.Hosting;
 
@@ -86,6 +87,64 @@ public static class SquadBuilderExtensions
             {
                 Description = "Counts pending .md files in .squad/decisions/inbox/.",
                 IconName = "Mail",
+                UpdateState = _ => ResourceCommandState.Enabled,
+            });
+
+        resourceBuilder.WithCommand(
+            name: "send-message",
+            displayName: "Send Message",
+            executeCommand: ctx =>
+            {
+                var bus = ctx.ServiceProvider.GetService<ISquadMessageBus>();
+                if (bus is null)
+                {
+                    Console.WriteLine($"[Squad] Message bus not configured.");
+                    return Task.FromResult(new ExecuteCommandResult { Success = false });
+                }
+
+                Console.WriteLine($"[Squad] Use POST /api/messages to send a message to '{name}'. Bus is active.");
+                return Task.FromResult(new ExecuteCommandResult { Success = true });
+            },
+            new CommandOptions
+            {
+                Description = "Shows messaging endpoint info for this squad.",
+                IconName = "ChatBubblesQuestion",
+                UpdateState = _ => ResourceCommandState.Enabled,
+            });
+
+        resourceBuilder.WithCommand(
+            name: "view-messages",
+            displayName: "View Messages",
+            executeCommand: async ctx =>
+            {
+                var bus = ctx.ServiceProvider.GetService<ISquadMessageBus>();
+                if (bus is null)
+                {
+                    Console.WriteLine($"[Squad] Message bus not configured.");
+                    return new ExecuteCommandResult { Success = false };
+                }
+
+                var messages = await bus.GetInboxAsync(name, unreadOnly: true);
+                if (messages.Count == 0)
+                {
+                    Console.WriteLine($"[Squad] No unread messages for '{name}'.");
+                }
+                else
+                {
+                    Console.WriteLine($"[Squad] {messages.Count} unread message(s) for '{name}':");
+                    foreach (var msg in messages)
+                    {
+                        Console.WriteLine($"  [{msg.Timestamp:HH:mm}] From: {msg.From} | Subject: {msg.Subject}");
+                    }
+                }
+
+                return new ExecuteCommandResult { Success = true };
+            },
+            new CommandOptions
+            {
+                Description = "Shows unread messages for this squad.",
+                IconName = "MailRead",
+                IsHighlighted = true,
                 UpdateState = _ => ResourceCommandState.Enabled,
             });
 

@@ -21,7 +21,7 @@ public sealed class SquadResource : Resource, IResourceWithConnectionString
 
     public ReferenceExpression ConnectionStringExpression =>
         ReferenceExpression.Create(
-            $"squad://resource/{Uri.EscapeDataString(Name)}?teamRoot={Uri.EscapeDataString(TeamRoot)}&agents={Uri.EscapeDataString(string.Join(",", _agents))}&protocol=maf-1.0");
+            $"squad://resource/{Uri.EscapeDataString(Name)}?teamRoot={Uri.EscapeDataString(TeamRoot)}&agents={Uri.EscapeDataString(string.Join(",", _agents))}&protocol=maf-1.0&messagingApi=/api/messages");
 
     public SquadResource(string name, string teamRoot)
         : base(name)

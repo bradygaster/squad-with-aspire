@@ -10,6 +10,7 @@ internal sealed class SquadLifecycleHook : IDistributedApplicationEventingSubscr
 {
     private readonly ILogger<SquadLifecycleHook> _logger;
     private readonly ResourceNotificationService _notifications;
+    private readonly ISquadMessageBus? _messageBus;
 
     private const string StateSpawning = "Spawning";
     private const string StateActive = "Active";
@@ -17,10 +18,12 @@ internal sealed class SquadLifecycleHook : IDistributedApplicationEventingSubscr
 
     public SquadLifecycleHook(
         ILogger<SquadLifecycleHook> logger,
-        ResourceNotificationService notifications)
+        ResourceNotificationService notifications,
+        ISquadMessageBus? messageBus = null)
     {
         _logger = logger;
         _notifications = notifications;
+        _messageBus = messageBus;
     }
 
     public Task SubscribeAsync(
@@ -98,7 +101,7 @@ internal sealed class SquadLifecycleHook : IDistributedApplicationEventingSubscr
     {
         try
         {
-            return SquadDashboardProperties.CreateWithLiveStats(squad);
+            return SquadDashboardProperties.CreateWithLiveStats(squad, _messageBus);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException)
         {

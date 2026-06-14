@@ -10,22 +10,11 @@
 using System;
 using System.Reflection;
 
-[assembly: System.Reflection.AssemblyMetadata("dcpclipath", ("/Users/bradyg/.nuget/packages/aspire.hosting.orchestration.osx-arm64/13.4.3/tools" +
-    "/dcp"))]
-[assembly: System.Reflection.AssemblyMetadata("dcpextensionpaths", ("/Users/bradyg/.nuget/packages/aspire.hosting.orchestration.osx-arm64/13.4.3/tools" +
-    "/ext/"))]
-[assembly: System.Reflection.AssemblyMetadata("apphostprojectpath", ("/Users/bradyg/src/copilot-worktrees/squad-with-aspire/bradygaster-psychic-carniva" +
-    "l/BrutalGames.AppHost"))]
-[assembly: System.Reflection.AssemblyMetadata("apphostprojectname", "BrutalGames.AppHost.csproj")]
-[assembly: System.Reflection.AssemblyMetadata("aspiredashboardpath", ("/Users/bradyg/.nuget/packages/aspire.dashboard.sdk.osx-arm64/13.4.3/tools/Aspire." +
-    "Dashboard.dll"))]
-[assembly: System.Reflection.AssemblyMetadataAttribute("apphostprojectbaseintermediateoutputpath", ("/Users/bradyg/src/copilot-worktrees/squad-with-aspire/bradygaster-psychic-carniva" +
-    "l/BrutalGames.AppHost/obj/"))]
 [assembly: System.Reflection.AssemblyCompanyAttribute("BrutalGames.AppHost")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyDescriptionAttribute("Aspire AppHost for brutalgames.online — orchestrates 4 Squad AI-agent teams.")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+200826a0d63d3c6ccc65f1c49183ed71d719fd45")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+c4bf08ff31f63213740011ecaa4f3c92d13d9847")]
 [assembly: System.Reflection.AssemblyProductAttribute("BrutalGames.AppHost")]
 [assembly: System.Reflection.AssemblyTitleAttribute("BrutalGames.AppHost")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
