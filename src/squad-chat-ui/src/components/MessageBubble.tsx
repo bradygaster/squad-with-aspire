@@ -8,10 +8,13 @@ interface MessageBubbleProps {
 
 export function MessageBubble({ message, accentColor }: MessageBubbleProps) {
   const isUserMessage = message.from === 'user'
-  const timestamp = new Intl.DateTimeFormat(undefined, {
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(new Date(message.timestamp))
+  const parsedDate = new Date(message.timestamp)
+  const timestamp = Number.isNaN(parsedDate.getTime())
+    ? ''
+    : new Intl.DateTimeFormat(undefined, {
+        hour: 'numeric',
+        minute: '2-digit',
+      }).format(parsedDate)
 
   const bubbleStyle = {
     '--accent-color': accentColor,
