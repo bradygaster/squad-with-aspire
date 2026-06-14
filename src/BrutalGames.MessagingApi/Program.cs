@@ -1,5 +1,11 @@
 using Aspire.Hosting;
 using BrutalGames.MessagingApi;
+using GitHub.Copilot;
+using OpenTelemetry;
+using Squad.Agents.AI;
+
+// Allow gRPC over HTTP/2 without TLS for OTLP export (Aspire dev cert)
+AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -8,15 +14,78 @@ var dbPath = Environment.GetEnvironmentVariable("SQUAD_MESSAGES_DB")
     ?? Path.Combine(Directory.GetCurrentDirectory(), "squad-messages.db");
 builder.Services.AddSquadMessaging(dbPath);
 
-// Squad coordinator routes user messages to all squads
+// Register real SquadAgent instances (one per squad) via keyed DI.
+// Connection strings are injected by Aspire AppHost via WithReference().
+// Each agent gets the messaging bus MCP tools so they can talk to other squads and the user.
+var extensionPath = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "..", ".github", "extensions", "squad-messaging", "extension.mjs"));
+
+builder.Services.AddKeyedSquadAgent("research-and-ideation-squad", options =>
+{
+    options.ConfigureSession = session =>
+    {
+        session.McpServers ??= new Dictionary<string, McpServerConfig>();
+        session.McpServers.Add("squad-bus", new McpStdioServerConfig
+        {
+            Command = "node",
+            Args = [extensionPath],
+            Env = new Dictionary<string, string> { ["MESSAGING_API_URL"] = "http://localhost:5001" },
+        });
+    };
+});
+
+builder.Services.AddKeyedSquadAgent("site-design-squad", options =>
+{
+    options.ConfigureSession = session =>
+    {
+        session.McpServers ??= new Dictionary<string, McpServerConfig>();
+        session.McpServers.Add("squad-bus", new McpStdioServerConfig
+        {
+            Command = "node",
+            Args = [extensionPath],
+            Env = new Dictionary<string, string> { ["MESSAGING_API_URL"] = "http://localhost:5001" },
+        });
+    };
+});
+
+builder.Services.AddKeyedSquadAgent("game-development-squad", options =>
+{
+    options.ConfigureSession = session =>
+    {
+        session.McpServers ??= new Dictionary<string, McpServerConfig>();
+        session.McpServers.Add("squad-bus", new McpStdioServerConfig
+        {
+            Command = "node",
+            Args = [extensionPath],
+            Env = new Dictionary<string, string> { ["MESSAGING_API_URL"] = "http://localhost:5001" },
+        });
+    };
+});
+
+builder.Services.AddKeyedSquadAgent("qa-squad", options =>
+{
+    options.ConfigureSession = session =>
+    {
+        session.McpServers ??= new Dictionary<string, McpServerConfig>();
+        session.McpServers.Add("squad-bus", new McpStdioServerConfig
+        {
+            Command = "node",
+            Args = [extensionPath],
+            Env = new Dictionary<string, string> { ["MESSAGING_API_URL"] = "http://localhost:5001" },
+        });
+    };
+});
+
+// Squad coordinator routes user messages to all squads and dispatches to SquadAgents
 builder.Services.AddHostedService<CoordinatorService>();
 
-// OpenTelemetry: export Squad.Messaging and Squad.Config traces to the Aspire dashboard
-builder.Services.AddOpenTelemetry()
+// OpenTelemetry: export traces to the Aspire dashboard via OTLP
+var otel = builder.Services.AddOpenTelemetry()
     .WithTracing(tracing => tracing
         .AddSource(SquadMessagingServiceExtensions.ActivitySourceName)
         .AddSource(SquadMessagingServiceExtensions.ConfigActivitySourceName)
-        .AddSource("Squad.Coordinator"));
+        .AddSource("Squad.Coordinator")
+        .AddSource(SquadAgentDiagnostics.ActivitySourceName));
+otel.UseOtlpExporter();
 
 // CORS for the chat UI
 builder.Services.AddCors(options =>

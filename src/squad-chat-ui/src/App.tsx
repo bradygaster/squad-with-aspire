@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import './App.css'
-import { sendMessage } from './api'
+import { clearMessages as clearMessagesApi, sendMessage } from './api'
 import { ChatThread } from './components/ChatThread'
 import { ComposeBar } from './components/ComposeBar'
 import { RepoPickerModal } from './components/RepoPickerModal'
@@ -24,6 +24,17 @@ const KNOWN_SQUADS = [
   'qa-squad',
 ] as const
 
+type KnownSquad = (typeof KNOWN_SQUADS)[number]
+
+function isKnownSquad(name: string): name is KnownSquad {
+  return KNOWN_SQUADS.includes(name as KnownSquad)
+}
+
+const DIRECT_SQUAD_PATTERN = new RegExp(
+  `^@(${KNOWN_SQUADS.map((squad) => squad.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\b\\s*(.*)$`,
+  'i',
+)
+
 function mergeMessages(messages: SquadMessage[]): SquadMessage[] {
   const messagesById = new Map(messages.map((message) => [message.id, message]))
   return Array.from(messagesById.values()).sort(
@@ -31,12 +42,49 @@ function mergeMessages(messages: SquadMessage[]): SquadMessage[] {
   )
 }
 
+function createLocalMessage(
+  from: string,
+  to: string,
+  subject: string,
+  body: string,
+): SquadMessage {
+  return {
+    id: crypto.randomUUID(),
+    from,
+    to,
+    subject,
+    body,
+    timestamp: new Date().toISOString(),
+    isRead: true,
+  }
+}
+
 function App() {
   const [targetRepo, setTargetRepo] = useState<string | null>(null)
-  const { messages: streamedMessages } = useMessageStream()
   const [sentMessages, setSentMessages] = useState<SquadMessage[]>([])
   const [isSending, setIsSending] = useState(false)
+  const [waitingForResponse, setWaitingForResponse] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [now, setNow] = useState(() => Date.now())
+  const handleStreamMessages = useCallback((incomingMessages: SquadMessage[]) => {
+    if (incomingMessages.some((message) => isKnownSquad(message.from))) {
+      setWaitingForResponse(false)
+    }
+  }, [])
+  const {
+    messages: streamedMessages,
+    clearMessages: clearStreamedMessages,
+  } = useMessageStream(handleStreamMessages)
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNow(Date.now())
+    }, 60_000)
+
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [])
 
   const handleRepoSelected = useCallback((repo: string) => {
     setTargetRepo(repo)
@@ -50,7 +98,7 @@ function App() {
         // Show coordinator's acknowledgment (TO user)
         if (msg.from === 'coordinator' && msg.to === 'user') return true
         // Show squad replies (TO user or TO coordinator, i.e. replies up the chain)
-        if (KNOWN_SQUADS.includes(msg.from as (typeof KNOWN_SQUADS)[number])) return true
+        if (isKnownSquad(msg.from)) return true
         // Hide coordinator-to-squad routing (internal dispatch)
         return false
       }),
@@ -58,8 +106,6 @@ function App() {
   )
 
   const squads = useMemo<Squad[]>(() => {
-    const now = Date.now()
-
     return KNOWN_SQUADS.map((name) => {
       const unreadCount = messages.filter(
         (message) => message.from === name && !message.isRead,
@@ -80,18 +126,57 @@ function App() {
         unreadCount,
       }
     })
-  }, [messages])
+  }, [messages, now])
 
   const handleSend = async (body: string) => {
     setIsSending(true)
     setErrorMessage(null)
 
     try {
-      const createdMessage = await sendMessage('user', 'coordinator', 'chat', body)
+      const trimmedBody = body.trim()
+
+      if (trimmedBody.startsWith('/clear')) {
+        await clearMessagesApi()
+        clearStreamedMessages()
+        setSentMessages([])
+        setWaitingForResponse(false)
+        return
+      }
+
+      if (trimmedBody.startsWith('/squads')) {
+        const squadsMessage = createLocalMessage(
+          'coordinator',
+          'user',
+          'squads',
+          `Available squads:\n${KNOWN_SQUADS.map((squad) => `- ${squad}`).join('\n')}`,
+        )
+        setSentMessages((currentMessages) =>
+          mergeMessages([...currentMessages, squadsMessage]),
+        )
+        setWaitingForResponse(false)
+        return
+      }
+
+      let destination = 'coordinator'
+      let outboundBody = trimmedBody
+
+      if (trimmedBody.startsWith('/status')) {
+        outboundBody = 'what is your current status?'
+      } else {
+        const directMessageMatch = trimmedBody.match(DIRECT_SQUAD_PATTERN)
+        if (directMessageMatch) {
+          destination = directMessageMatch[1].toLowerCase()
+          outboundBody = directMessageMatch[2].trim()
+        }
+      }
+
+      setWaitingForResponse(true)
+      const createdMessage = await sendMessage('user', destination, 'chat', outboundBody)
       setSentMessages((currentMessages) =>
         mergeMessages([...currentMessages, createdMessage]),
       )
     } catch (error) {
+      setWaitingForResponse(false)
       const detail = error instanceof Error ? error.message : 'Unknown error'
       setErrorMessage(`Unable to send message. ${detail}`)
     } finally {
@@ -118,12 +203,16 @@ function App() {
       <SquadPresenceBar squads={squads} />
 
       <main className="app-main">
-        <ChatThread messages={messages} squadColors={SQUAD_COLORS} />
+        <ChatThread
+          isWaiting={waitingForResponse}
+          messages={messages}
+          squadColors={SQUAD_COLORS}
+        />
       </main>
 
       {errorMessage ? <div className="app-error">{errorMessage}</div> : null}
 
-      <ComposeBar disabled={isSending} onSend={handleSend} />
+      <ComposeBar disabled={isSending} onSend={handleSend} squads={KNOWN_SQUADS} />
     </div>
   )
 }

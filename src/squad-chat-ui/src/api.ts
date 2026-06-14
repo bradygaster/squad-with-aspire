@@ -1,6 +1,6 @@
 import type { SquadMessage } from './types'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:5001'
 
 const buildUrl = (path: string) => new URL(path, API_BASE_URL).toString()
 
@@ -27,6 +27,13 @@ export async function sendMessage(
   })
 
   return parseJsonResponse<SquadMessage>(response)
+}
+
+export async function clearMessages(): Promise<void> {
+  const response = await fetch(buildUrl('/api/messages'), { method: 'DELETE' })
+  if (!response.ok) {
+    throw new Error(`Failed to clear: ${response.status}`)
+  }
 }
 
 export async function getInbox(

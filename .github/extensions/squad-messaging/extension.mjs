@@ -3,7 +3,7 @@
 
 import { joinSession } from "@github/copilot-sdk/extension";
 
-const API_BASE = process.env.MESSAGING_API_URL || "http://localhost:5000";
+const API_BASE = process.env.MESSAGING_API_URL || "http://localhost:5001";
 
 const session = await joinSession({
     tools: [

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { API_BASE_URL } from '../api'
 import type { SquadMessage } from '../types'
 
@@ -21,8 +21,13 @@ function mergeMessages(
   )
 }
 
-export function useMessageStream() {
+export function useMessageStream(
+  onMessagesReceived?: (messages: SquadMessage[]) => void,
+) {
   const [messages, setMessages] = useState<SquadMessage[]>([])
+  const clearMessages = useCallback(() => {
+    setMessages([])
+  }, [])
 
   useEffect(() => {
     let eventSource: EventSource | null = null
@@ -64,6 +69,7 @@ export function useMessageStream() {
               ? [payload.message]
               : [payload]
 
+          onMessagesReceived?.(incomingMessages)
           setMessages((currentMessages) =>
             mergeMessages(currentMessages, incomingMessages),
           )
@@ -89,7 +95,7 @@ export function useMessageStream() {
         window.clearTimeout(reconnectTimer)
       }
     }
-  }, [])
+  }, [onMessagesReceived])
 
-  return { messages }
+  return { messages, clearMessages }
 }

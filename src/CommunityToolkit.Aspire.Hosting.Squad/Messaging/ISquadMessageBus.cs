@@ -9,6 +9,7 @@ public interface ISquadMessageBus
     Task<IReadOnlyList<SquadMessage>> GetInboxAsync(string squadName, bool unreadOnly = false, CancellationToken ct = default);
     Task<IReadOnlyList<SquadMessage>> GetRecentAsync(int limit = 50, CancellationToken ct = default);
     Task<IReadOnlyList<SquadMessage>> GetConversationAsync(string correlationId, CancellationToken ct = default);
+    Task ClearAllAsync(CancellationToken ct = default);
     Task MarkReadAsync(string messageId, CancellationToken ct = default);
     IAsyncEnumerable<SquadMessage> SubscribeAsync(string squadName, CancellationToken ct = default);
 }

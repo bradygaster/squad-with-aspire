@@ -6,7 +6,7 @@ import react from '@vitejs/plugin-react'
 const messagingApiUrl =
   process.env.services__messaging_api__https__0 ??
   process.env.services__messaging_api__http__0 ??
-  'http://localhost:5000'
+  'http://localhost:5001'
 
 export default defineConfig({
   plugins: [react()],
