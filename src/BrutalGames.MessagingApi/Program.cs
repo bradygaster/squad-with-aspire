@@ -8,17 +8,15 @@ var dbPath = Environment.GetEnvironmentVariable("SQUAD_MESSAGES_DB")
     ?? Path.Combine(Directory.GetCurrentDirectory(), "squad-messages.db");
 builder.Services.AddSquadMessaging(dbPath);
 
-// Squad responder services — coordinator routes, squads reply
+// Squad coordinator routes user messages to all squads
 builder.Services.AddHostedService<CoordinatorService>();
-builder.Services.AddHostedService<SquadResponderService>();
 
 // OpenTelemetry: export Squad.Messaging and Squad.Config traces to the Aspire dashboard
 builder.Services.AddOpenTelemetry()
     .WithTracing(tracing => tracing
         .AddSource(SquadMessagingServiceExtensions.ActivitySourceName)
         .AddSource(SquadMessagingServiceExtensions.ConfigActivitySourceName)
-        .AddSource("Squad.Coordinator")
-        .AddSource("Squad.Responder"));
+        .AddSource("Squad.Coordinator"));
 
 // CORS for the chat UI
 builder.Services.AddCors(options =>
