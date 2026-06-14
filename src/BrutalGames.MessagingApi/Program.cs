@@ -7,10 +7,11 @@ var dbPath = Environment.GetEnvironmentVariable("SQUAD_MESSAGES_DB")
     ?? Path.Combine(Directory.GetCurrentDirectory(), "squad-messages.db");
 builder.Services.AddSquadMessaging(dbPath);
 
-// OpenTelemetry: export Squad.Messaging traces to the Aspire dashboard
+// OpenTelemetry: export Squad.Messaging and Squad.Config traces to the Aspire dashboard
 builder.Services.AddOpenTelemetry()
     .WithTracing(tracing => tracing
-        .AddSource(SquadMessagingServiceExtensions.ActivitySourceName));
+        .AddSource(SquadMessagingServiceExtensions.ActivitySourceName)
+        .AddSource(SquadMessagingServiceExtensions.ConfigActivitySourceName));
 
 // CORS for the chat UI
 builder.Services.AddCors(options =>
@@ -24,5 +25,6 @@ app.UseCors();
 
 // Map the inter-squad messaging endpoints
 app.MapSquadMessagingApi();
+app.MapSquadConfigApi();
 
 app.Run();

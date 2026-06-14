@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import './App.css'
 import { sendMessage } from './api'
 import { ChatThread } from './components/ChatThread'
 import { ComposeBar } from './components/ComposeBar'
+import { RepoPickerModal } from './components/RepoPickerModal'
 import { SquadPresenceBar } from './components/SquadPresenceBar'
 import { useMessageStream } from './hooks/useMessageStream'
 import type { Squad, SquadMessage } from './types'
@@ -31,10 +32,15 @@ function mergeMessages(messages: SquadMessage[]): SquadMessage[] {
 }
 
 function App() {
+  const [targetRepo, setTargetRepo] = useState<string | null>(null)
   const { messages: streamedMessages } = useMessageStream()
   const [sentMessages, setSentMessages] = useState<SquadMessage[]>([])
   const [isSending, setIsSending] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+
+  const handleRepoSelected = useCallback((repo: string) => {
+    setTargetRepo(repo)
+  }, [])
 
   const messages = useMemo(
     () => mergeMessages([...streamedMessages, ...sentMessages]),
@@ -85,13 +91,17 @@ function App() {
 
   return (
     <div className="app-shell">
+      {!targetRepo && <RepoPickerModal onRepoSelected={handleRepoSelected} />}
+
       <header className="app-header">
         <div>
           <p className="app-eyebrow">Inter-squad messaging</p>
           <h1>Squad chat</h1>
         </div>
         <p className="app-subtitle">
-          Coordinate a multi-agent team from one live thread with streaming updates.
+          {targetRepo
+            ? `Working on ${targetRepo}`
+            : 'Coordinate a multi-agent team from one live thread with streaming updates.'}
         </p>
       </header>
 

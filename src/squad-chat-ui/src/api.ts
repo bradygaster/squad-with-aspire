@@ -55,4 +55,26 @@ export async function markRead(messageId: string): Promise<void> {
   }
 }
 
+// Config API
+
+export async function getConfig(key: string): Promise<string | null> {
+  const response = await fetch(buildUrl(`/api/config/${encodeURIComponent(key)}`))
+  if (response.status === 404) return null
+  const data = await parseJsonResponse<{ key: string; value: string }>(response)
+  return data.value
+}
+
+export async function setConfig(key: string, value: string): Promise<void> {
+  await fetch(buildUrl(`/api/config/${encodeURIComponent(key)}`), {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value }),
+  })
+}
+
+export async function getAllConfig(): Promise<Record<string, string>> {
+  const response = await fetch(buildUrl('/api/config'))
+  return parseJsonResponse<Record<string, string>>(response)
+}
+
 export { API_BASE_URL }

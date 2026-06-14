@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyDescriptionAttribute("HTTP API for inter-squad messaging.")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+c4bf08ff31f63213740011ecaa4f3c92d13d9847")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+ea68f303104311a7de87bdebc5e0272f8a2c991f")]
 [assembly: System.Reflection.AssemblyProductAttribute("BrutalGames.MessagingApi")]
 [assembly: System.Reflection.AssemblyTitleAttribute("BrutalGames.MessagingApi")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

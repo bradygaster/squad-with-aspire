@@ -9,6 +9,8 @@ internal sealed record SendMessageRequest(string From, string To, string Subject
 
 internal sealed record ReplyMessageRequest(string From, string Body);
 
+internal sealed record ConfigValueRequest(string Value);
+
 public static class SquadMessagingEndpoints
 {
     public static IEndpointRouteBuilder MapSquadMessagingApi(this IEndpointRouteBuilder app)
@@ -73,6 +75,48 @@ public static class SquadMessagingEndpoints
                 await context.Response.WriteAsync($"data: {json}\n\n", ct);
                 await context.Response.Body.FlushAsync(ct);
             }
+        });
+
+        return app;
+    }
+
+    /// <summary>
+    /// Maps the squad configuration API endpoints (/api/config).
+    /// </summary>
+    public static IEndpointRouteBuilder MapSquadConfigApi(this IEndpointRouteBuilder app)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+
+        var group = app.MapGroup("/api/config");
+
+        // GET /api/config — get all config
+        group.MapGet("/", async (ISquadConfigStore config, CancellationToken ct) =>
+        {
+            var all = await config.GetAllAsync(ct);
+            return Results.Ok(all);
+        });
+
+        // GET /api/config/{key}
+        group.MapGet("/{key}", async (string key, ISquadConfigStore config, CancellationToken ct) =>
+        {
+            var value = await config.GetAsync(key, ct);
+            return value is not null
+                ? Results.Ok(new { key, value })
+                : Results.NotFound();
+        });
+
+        // PUT /api/config/{key}
+        group.MapPut("/{key}", async (string key, ConfigValueRequest req, ISquadConfigStore config, CancellationToken ct) =>
+        {
+            await config.SetAsync(key, req.Value, ct);
+            return Results.Ok(new { key, value = req.Value });
+        });
+
+        // DELETE /api/config/{key}
+        group.MapDelete("/{key}", async (string key, ISquadConfigStore config, CancellationToken ct) =>
+        {
+            await config.DeleteAsync(key, ct);
+            return Results.NoContent();
         });
 
         return app;
