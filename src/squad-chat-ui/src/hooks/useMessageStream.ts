@@ -3,6 +3,7 @@ import { API_BASE_URL } from '../api'
 import type { SquadMessage } from '../types'
 
 const STREAM_PATH = '/api/messages/stream?squad=*'
+const RECENT_PATH = '/api/messages/recent?limit=50'
 const RECONNECT_DELAY_MS = 2000
 
 function mergeMessages(
@@ -27,6 +28,20 @@ export function useMessageStream() {
     let eventSource: EventSource | null = null
     let reconnectTimer: number | null = null
     let isDisposed = false
+
+    // Load existing messages first
+    const loadRecent = async () => {
+      try {
+        const url = new URL(RECENT_PATH, API_BASE_URL)
+        const response = await fetch(url.toString())
+        if (response.ok) {
+          const recent = (await response.json()) as SquadMessage[]
+          setMessages((current) => mergeMessages(current, recent))
+        }
+      } catch {
+        // Will retry on next reconnect
+      }
+    }
 
     const connect = () => {
       if (isDisposed) {
@@ -65,7 +80,7 @@ export function useMessageStream() {
       }
     }
 
-    connect()
+    loadRecent().then(connect)
 
     return () => {
       isDisposed = true
