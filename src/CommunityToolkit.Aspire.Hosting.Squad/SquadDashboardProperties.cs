@@ -29,6 +29,11 @@ internal static class SquadDashboardProperties
 
     public static ResourcePropertySnapshot[] CreateWithLiveStats(SquadResource squad)
     {
+        return CreateWithLiveStats(squad, messageBus: null);
+    }
+
+    public static ResourcePropertySnapshot[] CreateWithLiveStats(SquadResource squad, ISquadMessageBus? messageBus)
+    {
         var staticProperties = CreateStatic(squad);
         var inboxDirectory = Path.Combine(squad.TeamRoot, ".squad", "decisions", "inbox");
         var decisionsFile = Path.Combine(squad.TeamRoot, ".squad", "decisions.md");
@@ -51,11 +56,23 @@ internal static class SquadDashboardProperties
             }
         }
 
+        var unreadCount = 0;
+        if (messageBus is not null)
+        {
+            try
+            {
+                unreadCount = messageBus.GetInboxAsync(squad.Name, unreadOnly: true)
+                    .GetAwaiter().GetResult().Count;
+            }
+            catch { /* best-effort */ }
+        }
+
         return
         [
             ..staticProperties,
             new ResourcePropertySnapshot("Pending inbox items", inboxDepth.ToString()),
             new ResourcePropertySnapshot("Last decision", lastDecision),
+            new ResourcePropertySnapshot("Unread messages", unreadCount.ToString()),
         ];
     }
 }
