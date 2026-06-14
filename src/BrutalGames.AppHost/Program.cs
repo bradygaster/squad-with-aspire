@@ -5,6 +5,7 @@ var repoRoot = Path.GetFullPath(Path.Combine(builder.AppHostDirectory, "..", "..
 
 // Messaging API service (HTTP endpoints for inter-squad communication)
 var messagingApi = builder.AddProject<Projects.BrutalGames_MessagingApi>("messaging-api")
+    .WithHttpEndpoint(port: 5001)
     .WithEnvironment("SQUAD_MESSAGES_DB", Path.Combine(repoRoot, "squad-messages.db"))
     .WithEnvironment("OTEL_EXPORTER_OTLP_ENDPOINT", Environment.GetEnvironmentVariable("DOTNET_DASHBOARD_OTLP_ENDPOINT_URL") ?? "https://localhost:21117")
     .WithEnvironment("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
