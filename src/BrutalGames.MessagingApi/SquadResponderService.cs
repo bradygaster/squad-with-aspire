@@ -20,22 +20,46 @@ public sealed class SquadResponderService : BackgroundService
         ["research-and-ideation-squad"] = new(
             "Research & Ideation",
             "We research game concepts, explore market trends, and brainstorm creative directions.",
-            ["game-researcher", "creative-director", "game-curator", "vibe-checker"]),
+            ["game-researcher", "creative-director", "game-curator", "vibe-checker"],
+            [
+                "🔍 Interesting! Let me dig into that. Our game-researcher is pulling up relevant data and the creative-director is sketching some initial concepts.",
+                "💭 The vibe-checker says this has potential. We'll put together a mood board and some market research to validate the direction.",
+                "📚 Our game-curator is cross-referencing similar successful projects. We'll have insights for you shortly.",
+                "🧠 Love the creative challenge! The team is brainstorming — expect a concept brief soon.",
+            ]),
 
         ["site-design-squad"] = new(
             "Site Design",
             "We handle frontend architecture, theme development, layout design, and user experience.",
-            ["lead-designer", "frontend-architect", "theme-developer", "layout-specialist"]),
+            ["lead-designer", "frontend-architect", "theme-developer", "layout-specialist"],
+            [
+                "🎨 On it! The lead-designer is wireframing and the frontend-architect is evaluating component patterns.",
+                "📐 The layout-specialist is sketching responsive breakpoints. We'll have a design proposal ready soon.",
+                "🖌️ Our theme-developer is exploring color palettes and typography that match the project vibe.",
+                "✏️ Noted! We're reviewing accessibility and UX best practices for this. The lead-designer will share options.",
+            ]),
 
         ["game-development-squad"] = new(
             "Game Development",
             "We build game mechanics, UI systems, rendering pipelines, and core gameplay loops.",
-            ["lead", "mechanic", "ui", "renderer"]),
+            ["lead", "mechanic", "ui", "renderer"],
+            [
+                "⚙️ Roger that. The mechanic is prototyping core systems while the renderer evaluates performance constraints.",
+                "🎮 The lead is breaking this down into implementation tickets. UI and mechanic are pairing on the approach.",
+                "🔧 Our renderer is benchmarking options and the UI specialist is mapping out the interaction model.",
+                "🏗️ Solid challenge. The team is spiking a proof-of-concept — we'll push a draft PR for feedback.",
+            ]),
 
         ["qa-squad"] = new(
             "QA",
             "We run test automation, gameplay testing, visual review, and ensure quality standards.",
-            ["test-lead", "automation-engineer", "gameplay-tester", "visual-reviewer"]),
+            ["test-lead", "automation-engineer", "gameplay-tester", "visual-reviewer"],
+            [
+                "🧪 The automation-engineer is writing test scenarios and the gameplay-tester is planning edge cases.",
+                "✅ Got it. The test-lead is defining acceptance criteria. We'll have a test plan mapped out shortly.",
+                "🔬 The visual-reviewer is setting up screenshot comparisons and the automation-engineer is scripting regression checks.",
+                "🐛 We're on it. Our gameplay-tester is enumerating user flows to verify. Expect a coverage report.",
+            ]),
     };
 
     public SquadResponderService(ISquadMessageBus bus, ILogger<SquadResponderService> logger)
@@ -103,7 +127,7 @@ public sealed class SquadResponderService : BackgroundService
         var body = message.Body.ToLowerInvariant();
 
         // Introductions
-        if (body.Contains("introduce") || body.Contains("who are you") || body.Contains("hello") || body.Contains("hey"))
+        if (body.Contains("introduce") || body.Contains("who are you") || body.Contains("hello") || body.Contains("hey team"))
         {
             var members = string.Join(", ", personality.Members);
             return $"👋 Hey! We're the {personality.DisplayName} squad. {personality.Description} " +
@@ -133,10 +157,40 @@ public sealed class SquadResponderService : BackgroundService
                    $"Just tell us what you need!";
         }
 
-        // Acknowledge anything else
-        return $"✅ Acknowledged. The {personality.DisplayName} squad received your message. " +
-               $"{personality.Description} Let us know how we can help!";
+        // Creative/fun requests — give unique per-squad answers
+        if (body.Contains("haiku") || body.Contains("poem") || body.Contains("joke") || body.Contains("fun"))
+        {
+            return personality.DisplayName switch
+            {
+                "Research & Ideation" =>
+                    "🎨 Here's one from the lab:\n\n" +
+                    "Ideas spark like stars,\n" +
+                    "research lights the path ahead—\n" +
+                    "concepts bloom from dust.",
+                "Site Design" =>
+                    "🖌️ From our design desk:\n\n" +
+                    "Pixels form with care,\n" +
+                    "layouts breathe on every screen—\n" +
+                    "beauty meets the code.",
+                "Game Development" =>
+                    "🎮 From the engine room:\n\n" +
+                    "Loops run, frames align,\n" +
+                    "mechanics hum beneath the hood—\n" +
+                    "players press \"start\" now.",
+                "QA" =>
+                    "🐛 From the test bench:\n\n" +
+                    "Bugs hide in the night,\n" +
+                    "we chase them through every branch—\n" +
+                    "green checks bring us peace.",
+                _ => "✨ Words escape us right now, but we're better with code!",
+            };
+        }
+
+        // Fallback — use varied responses per squad
+        var fallbacks = personality.Fallbacks;
+        var index = Math.Abs(message.Id.GetHashCode()) % fallbacks.Length;
+        return fallbacks[index];
     }
 
-    private sealed record SquadPersonality(string DisplayName, string Description, string[] Members);
+    private sealed record SquadPersonality(string DisplayName, string Description, string[] Members, string[] Fallbacks);
 }
