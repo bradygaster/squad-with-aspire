@@ -5,7 +5,8 @@ var repoRoot = Path.GetFullPath(Path.Combine(builder.AppHostDirectory, "..", "..
 
 // Messaging API service (HTTP endpoints for inter-squad communication)
 var messagingApi = builder.AddProject<Projects.BrutalGames_MessagingApi>("messaging-api")
-    .WithEnvironment("SQUAD_MESSAGES_DB", Path.Combine(repoRoot, "squad-messages.db"));
+    .WithEnvironment("SQUAD_MESSAGES_DB", Path.Combine(repoRoot, "squad-messages.db"))
+    .WithEnvironment("GITHUB_TOKEN", Environment.GetEnvironmentVariable("GITHUB_TOKEN") ?? "");
 
 // Chat UI (React + Vite) — proxies /api to messaging-api
 builder.AddNpmApp("squad-chat", Path.Combine(repoRoot, "src", "squad-chat-ui"), "dev")
