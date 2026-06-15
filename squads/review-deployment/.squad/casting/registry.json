@@ -2,44 +2,44 @@
   "agents": {
     "ReleaseManagementAgent": {
       "persistent_name": "ReleaseManagementAgent",
-      "universe": "descriptive",
-      "created_at": "2026-06-15T07:38:13Z",
-      "legacy_named": false,
+      "role": "Release Management Lead",
+      "created_at": "2026-06-15T07:57:35Z",
+      "legacy_named": true,
       "status": "active"
     },
     "FinalReviewAgent": {
       "persistent_name": "FinalReviewAgent",
-      "universe": "descriptive",
-      "created_at": "2026-06-15T07:38:13Z",
-      "legacy_named": false,
+      "role": "Final Review Gate",
+      "created_at": "2026-06-15T07:57:35Z",
+      "legacy_named": true,
       "status": "active"
     },
     "DeploymentValidationAgent": {
       "persistent_name": "DeploymentValidationAgent",
-      "universe": "descriptive",
-      "created_at": "2026-06-15T07:38:13Z",
-      "legacy_named": false,
+      "role": "Deployment Validation",
+      "created_at": "2026-06-15T07:57:35Z",
+      "legacy_named": true,
       "status": "active"
     },
     "ProductionReadinessAgent": {
       "persistent_name": "ProductionReadinessAgent",
-      "universe": "descriptive",
-      "created_at": "2026-06-15T07:38:13Z",
-      "legacy_named": false,
+      "role": "Production Readiness",
+      "created_at": "2026-06-15T07:57:35Z",
+      "legacy_named": true,
       "status": "active"
     },
     "PostDeploymentVerificationAgent": {
       "persistent_name": "PostDeploymentVerificationAgent",
-      "universe": "descriptive",
-      "created_at": "2026-06-15T07:38:13Z",
-      "legacy_named": false,
+      "role": "Post-Deployment Verification",
+      "created_at": "2026-06-15T07:57:35Z",
+      "legacy_named": true,
       "status": "active"
     },
     "ReleaseDocumentationAgent": {
       "persistent_name": "ReleaseDocumentationAgent",
-      "universe": "descriptive",
-      "created_at": "2026-06-15T07:38:13Z",
-      "legacy_named": false,
+      "role": "Release Documentation",
+      "created_at": "2026-06-15T07:57:35Z",
+      "legacy_named": true,
       "status": "active"
     }
   }
