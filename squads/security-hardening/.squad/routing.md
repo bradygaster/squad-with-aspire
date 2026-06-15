@@ -6,14 +6,15 @@ How to decide who handles what.
 
 | Work Type | Route To | Examples |
 |-----------|----------|----------|
-| Security architecture & design | SecurityArchitectureAgent | Architecture reviews, trust boundaries, encryption strategy, security patterns |
-| Threat modeling | ThreatModelingAgent | STRIDE analysis, attack surface mapping, threat registry, risk prioritization |
-| Identity & access | IdentitySecurityAgent | Auth flows, RBAC/ABAC, secrets management, token lifecycle, SSO/federation |
-| Dependencies & supply chain | DependencyAnalysisAgent | CVE scanning, dependency audits, safe upgrades, container image security |
-| Vulnerability assessment | VulnerabilityAssessmentAgent | Code security review, injection/XSS/CSRF, infra misconfigs, SAST/DAST |
-| Compliance & governance | ComplianceAgent | SOC2/GDPR/HIPAA mapping, gap analysis, audit readiness, data policies |
-| Security code review | SecurityArchitectureAgent + VulnerabilityAssessmentAgent | Review PRs for security implications |
-| Scope & priorities | SecurityArchitectureAgent | What to harden next, trade-offs, architectural decisions |
+| Security architecture & design | SecurityArchitectureAgent | Zero-trust design, defense-in-depth strategy, security boundaries, encryption at rest/transit |
+| Threat modeling & attack surface | ThreatModelingAgent | STRIDE analysis, attack trees, data flow diagrams, risk scoring |
+| Identity & access management | IdentitySecurityAgent | Auth flows, RBAC/ABAC, token management, OAuth/OIDC, secrets rotation |
+| Dependency & supply chain | DependencyAnalysisAgent | CVE scanning, SBOMs, package audit, license compliance, transitive deps |
+| Vulnerability scanning & pen testing | VulnerabilityAssessmentAgent | SAST/DAST findings, injection vectors, misconfigurations, remediation |
+| Compliance & policy | ComplianceAgent | SOC2, GDPR, HIPAA mapping, policy enforcement, audit evidence |
+| Scope & priorities | SecurityArchitectureAgent | What to harden next, risk-based prioritization, trade-offs |
+| Code review (security) | SecurityArchitectureAgent | Review PRs for security issues, check crypto usage, validate auth |
+| Testing (security) | VulnerabilityAssessmentAgent | Pen test scripts, fuzzing, security regression tests |
 | Session logging | Scribe | Automatic — never needs routing |
 | RAI review | Rai | Content safety, bias checks, credential detection, ethical review |
 

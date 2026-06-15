@@ -2,50 +2,50 @@
   "agents": {
     "SecurityArchitectureAgent": {
       "persistent_name": "SecurityArchitectureAgent",
-      "role": "Lead Security Architect",
-      "universe": "descriptive-pascalcase",
-      "created_at": "2026-06-15T07:38:48Z",
-      "legacy_named": false,
+      "universe": "custom",
+      "role": "Security Architect & Lead",
+      "created_at": "2026-06-15T07:57:37Z",
+      "legacy_named": true,
       "status": "active"
     },
     "ThreatModelingAgent": {
       "persistent_name": "ThreatModelingAgent",
-      "role": "Threat Modeling Specialist",
-      "universe": "descriptive-pascalcase",
-      "created_at": "2026-06-15T07:38:48Z",
-      "legacy_named": false,
+      "universe": "custom",
+      "role": "Threat Modeler",
+      "created_at": "2026-06-15T07:57:37Z",
+      "legacy_named": true,
       "status": "active"
     },
     "IdentitySecurityAgent": {
       "persistent_name": "IdentitySecurityAgent",
-      "role": "Identity & Access Security Specialist",
-      "universe": "descriptive-pascalcase",
-      "created_at": "2026-06-15T07:38:48Z",
-      "legacy_named": false,
+      "universe": "custom",
+      "role": "Identity & Access Security",
+      "created_at": "2026-06-15T07:57:37Z",
+      "legacy_named": true,
       "status": "active"
     },
     "DependencyAnalysisAgent": {
       "persistent_name": "DependencyAnalysisAgent",
-      "role": "Dependency & Supply Chain Security Analyst",
-      "universe": "descriptive-pascalcase",
-      "created_at": "2026-06-15T07:38:48Z",
-      "legacy_named": false,
+      "universe": "custom",
+      "role": "Dependency Analyst",
+      "created_at": "2026-06-15T07:57:37Z",
+      "legacy_named": true,
       "status": "active"
     },
     "VulnerabilityAssessmentAgent": {
       "persistent_name": "VulnerabilityAssessmentAgent",
-      "role": "Vulnerability Assessment Specialist",
-      "universe": "descriptive-pascalcase",
-      "created_at": "2026-06-15T07:38:48Z",
-      "legacy_named": false,
+      "universe": "custom",
+      "role": "Vulnerability Assessor",
+      "created_at": "2026-06-15T07:57:37Z",
+      "legacy_named": true,
       "status": "active"
     },
     "ComplianceAgent": {
       "persistent_name": "ComplianceAgent",
-      "role": "Security Compliance & Governance Specialist",
-      "universe": "descriptive-pascalcase",
-      "created_at": "2026-06-15T07:38:48Z",
-      "legacy_named": false,
+      "universe": "custom",
+      "role": "Compliance Reviewer",
+      "created_at": "2026-06-15T07:57:37Z",
+      "legacy_named": true,
       "status": "active"
     }
   }
