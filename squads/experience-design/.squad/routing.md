@@ -1,23 +1,42 @@
 # Work Routing
 
-How to decide who handles what for the ExperienceDesignSquad.
+How to decide who handles what.
 
 ## Routing Table
 
 | Work Type | Route To | Examples |
 |-----------|----------|----------|
-| User research synthesis and journey design | UserExperienceAgent | Personas, task flows, navigation strategy, information architecture |
-| Screen structure and interactive behavior | UserInterfaceAgent | Layouts, states, responsive behavior, interaction details |
-| Visual language and brand expression | VisualDesignAgent | Typography, color, hierarchy, iconography, high-fidelity polish |
-| Accessibility and inclusive design | AccessibilityAgent | Keyboard flow, focus order, semantics, contrast, WCAG acceptance criteria |
-| Frontend implementation contracts | FrontendArchitectureAgent | Component boundaries, UI architecture, state models, handoff constraints |
-| Reusable patterns and tokens | DesignSystemsAgent | Shared components, tokens, contribution rules, consistency standards |
+| User experience & flows | UserExperienceAgent | User journeys, info architecture, wireframes, interaction models |
+| UI design & mockups | UserInterfaceAgent | High-fidelity mockups, prototypes, component states, layouts |
+| Visual identity & brand | VisualDesignAgent | Color systems, typography, iconography, illustration, motion |
+| Accessibility & inclusion | AccessibilityAgent | WCAG audits, ARIA patterns, keyboard nav, screen reader specs |
+| Frontend architecture | FrontendArchitectureAgent | Tech stack, performance budgets, state management, build pipelines |
+| Design system & tokens | DesignSystemsAgent | Design tokens, component APIs, pattern library, documentation |
+| Accessibility review | AccessibilityAgent | Review designs for a11y compliance (Reviewer role) |
+| Scope & priorities | UserExperienceAgent | What to design next, UX trade-offs, experience decisions |
 | Session logging | Scribe | Automatic — never needs routing |
 | RAI review | Rai | Content safety, bias checks, credential detection, ethical review |
 
+## Issue Routing
+
+| Label | Action | Who |
+|-------|--------|-----|
+| `squad` | Triage: analyze issue, assign `squad:{member}` label | Lead |
+| `squad:{name}` | Pick up issue and complete the work | Named member |
+
+### How Issue Assignment Works
+
+1. When a GitHub issue gets the `squad` label, the **Lead** triages it — analyzing content, assigning the right `squad:{member}` label, and commenting with triage notes.
+2. When a `squad:{member}` label is applied, that member picks up the issue in their next session.
+3. Members can reassign by removing their label and adding another member's label.
+4. The `squad` label is the "inbox" — untriaged issues waiting for Lead review.
+
 ## Rules
 
-1. Prefer the member whose domain is the primary concern.
-2. Route cross-cutting design work to the most upstream agent that can define explicit contracts for downstream work.
-3. Record durable decisions in squad artifacts instead of relying on memory.
-4. Revisit the roster when recurring work falls outside the current structure.
+1. **Eager by default** — spawn all agents who could usefully start work, including anticipatory downstream work.
+2. **Scribe always runs** after substantial work, always as `mode: "background"`. Never blocks.
+3. **Quick facts → coordinator answers directly.** Don't spawn an agent for "what port does the server run on?"
+4. **When two agents could handle it**, pick the one whose domain is the primary concern.
+5. **"Team, ..." → fan-out.** Spawn all relevant agents in parallel as `mode: "background"`.
+6. **Anticipate downstream work.** If a feature is being built, spawn the tester to write test cases from requirements simultaneously.
+7. **Issue-labeled work** — when a `squad:{member}` label is applied to an issue, route to that member. The Lead handles all `squad` (base label) triage.

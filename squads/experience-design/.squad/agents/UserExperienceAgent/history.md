@@ -1,3 +1,8 @@
-# History
+# UserExperienceAgent History
 
-- 2026-06-15: Created as part of ExperienceDesignSquad to cover user experience strategy responsibilities for this repository.
+## Project Context
+
+- **Squad:** ExperienceDesignSquad
+- **Purpose:** Define user experience, information architecture, and interaction model
+- **Created:** 2026-06-15
+- **Requested by:** bradyg
