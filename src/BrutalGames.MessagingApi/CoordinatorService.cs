@@ -28,10 +28,13 @@ public sealed class CoordinatorService : BackgroundService
 
     private static readonly string[] AllSquads =
     [
-        "research-and-ideation-squad",
-        "site-design-squad",
-        "game-development-squad",
-        "qa-squad",
+        "ideation-research-planning-squad",
+        "experience-design-squad",
+        "application-development-squad",
+        "azure-infrastructure-squad",
+        "quality-testing-squad",
+        "security-hardening-squad",
+        "review-deployment-squad",
     ];
 
     public CoordinatorService(ISquadMessageBus bus, ISquadConfigStore config, IServiceProvider services, ILogger<CoordinatorService> logger)
