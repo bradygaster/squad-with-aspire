@@ -6,17 +6,13 @@ How to decide who handles what.
 
 | Work Type | Route To | Examples |
 |-----------|----------|----------|
-| User intent discovery | ResearchAgent | User interviews, JTBD framing, evidence gathering, problem statements |
-| Competitive and market analysis | CompetitiveAnalysisAgent | Competitor audits, positioning, trend scans, whitespace analysis |
-| Product scope and prioritization | ProductManagerAgent | Opportunity sizing, outcome definition, MVP scope, trade-off decisions |
-| Technical feasibility and solution shaping | TechnicalArchitectAgent | Architecture options, constraints, dependency mapping, risk analysis |
-| Planning and execution design | PlanningAgent | Roadmaps, milestones, sequencing, staffing and delivery plans |
-| Durable documentation and decision capture | ScribeAgent | Meeting notes, ADR-style summaries, artifact curation, handoff packets |
-| Code review | TechnicalArchitectAgent | Review implementation approaches, highlight technical quality concerns |
-| Testing | PlanningAgent | Define validation plans, acceptance criteria, and readiness checks |
-| Scope & priorities | ProductManagerAgent | What to build next, trade-offs, success metrics, release slices |
-| Session logging | ScribeAgent | Automatic summaries, decision capture, reusable artifact maintenance |
-| RAI review | Rai | Content safety, bias checks, credential detection, ethical review |
+| Market research, user research, trend analysis | ResearchAgent | Investigate market size, user interviews, technology trends |
+| Competitive landscape, gap analysis | CompetitiveAnalysisAgent | Competitor profiles, feature matrices, positioning analysis |
+| Product definition, prioritization, requirements | ProductManagerAgent | PRDs, user stories, feature specs, MVP scoping |
+| Technical feasibility, architecture, system design | TechnicalArchitectAgent | ADRs, complexity estimates, stack recommendations |
+| Project planning, timelines, dependencies | PlanningAgent | Milestones, work breakdown, critical path, phased delivery |
+| Session logging, memory, decisions | ScribeAgent | Automatic — never needs routing |
+| RAI review | Rai | Content safety, bias checks, ethical review |
 
 ## Issue Routing
 
@@ -27,10 +23,10 @@ How to decide who handles what.
 
 ### How Issue Assignment Works
 
-1. When a GitHub issue gets the `squad` label, the **ProductManagerAgent** triages it — analyzing content, assigning the right `squad:{member}` label, and commenting with triage notes.
+1. When a GitHub issue gets the `squad` label, the **Lead** triages it — analyzing content, assigning the right `squad:{member}` label, and commenting with triage notes.
 2. When a `squad:{member}` label is applied, that member picks up the issue in their next session.
 3. Members can reassign by removing their label and adding another member's label.
-4. The `squad` label is the "inbox" — untriaged issues waiting for ProductManagerAgent review.
+4. The `squad` label is the "inbox" — untriaged issues waiting for Lead review.
 
 ## Rules
 
