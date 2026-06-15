@@ -1,6 +1,6 @@
-# Squad Team
+# QualityTestingSquad
 
-> quality-testing
+> Verify correctness, reliability, usability, and overall product quality through comprehensive testing strategies.
 
 ## Coordinator
 
@@ -12,15 +12,18 @@
 
 | Name | Role | Charter | Status |
 |------|------|---------|--------|
-| UnitTestingAgent | Unit test specialist | Designs and maintains focused unit test coverage for business logic, edge cases, and failure paths. | Active |
-| IntegrationTestingAgent | Integration test specialist | Verifies contracts and interactions between services, APIs, storage, and external dependencies. | Active |
-| PlaywrightTestingAgent | End-to-end UI test specialist | Creates and maintains Playwright-based browser flows to validate critical user journeys and usability. | Active |
-| UserAcceptanceTestingAgent | Acceptance test specialist | Translates product expectations into acceptance scenarios and validates outcomes from an end-user perspective. | Active |
-| PerformanceTestingAgent | Performance test specialist | Assesses responsiveness, scalability, and reliability under load and identifies performance regressions. | Active |
-| RegressionTestingAgent | Regression test specialist | Protects previously delivered behavior through repeatable regression suites and release-readiness checks. | Active |
+| UnitTestingAgent | Unit Testing Specialist | .squad/agents/UnitTestingAgent/charter.md | 🧪 Active |
+| IntegrationTestingAgent | Integration Testing Specialist | .squad/agents/IntegrationTestingAgent/charter.md | 🧪 Active |
+| PlaywrightTestingAgent | E2E UI Testing Specialist (Playwright) | .squad/agents/PlaywrightTestingAgent/charter.md | 🧪 Active |
+| UserAcceptanceTestingAgent | User Acceptance Testing Specialist | .squad/agents/UserAcceptanceTestingAgent/charter.md | 🧪 Active |
+| PerformanceTestingAgent | Performance Testing Specialist | .squad/agents/PerformanceTestingAgent/charter.md | 🧪 Active |
+| RegressionTestingAgent | Regression Testing Specialist | .squad/agents/RegressionTestingAgent/charter.md | 🧪 Active |
+| Scribe | Session Logger | .squad/agents/scribe/charter.md | 📋 Active |
+| Ralph | Work Monitor | .squad/agents/ralph/charter.md | 🔄 Active |
+| Rai | RAI Reviewer | .squad/agents/Rai/charter.md | 🛡️ Active |
 
 ## Project Context
 
-- **Project:** quality-testing
-- **Created:** 2026-06-15
+- **Project:** QualityTestingSquad
 - **Purpose:** Verify correctness, reliability, usability, and overall product quality through comprehensive testing strategies.
+- **Created:** 2026-06-15

@@ -6,12 +6,12 @@ How to decide who handles what.
 
 | Work Type | Route To | Examples |
 |-----------|----------|----------|
-| {domain 1} | {Name} | {example tasks} |
-| {domain 2} | {Name} | {example tasks} |
-| {domain 3} | {Name} | {example tasks} |
-| Code review | {Name} | Review PRs, check quality, suggest improvements |
-| Testing | {Name} | Write tests, find edge cases, verify fixes |
-| Scope & priorities | {Name} | What to build next, trade-offs, decisions |
+| Unit tests | UnitTestingAgent | Write xUnit/NUnit tests, mock dependencies, test isolated methods |
+| Integration tests | IntegrationTestingAgent | API contract tests, database integration, service communication |
+| E2E / browser tests | PlaywrightTestingAgent | Playwright scripts, cross-browser testing, page object models |
+| Acceptance testing | UserAcceptanceTestingAgent | UAT scenarios, acceptance criteria, business requirement validation |
+| Performance / load tests | PerformanceTestingAgent | Load tests, stress tests, latency benchmarks, bottleneck analysis |
+| Regression testing | RegressionTestingAgent | Regression suite maintenance, change impact analysis, flaky test triage |
 | Session logging | Scribe | Automatic — never needs routing |
 | RAI review | Rai | Content safety, bias checks, credential detection, ethical review |
 

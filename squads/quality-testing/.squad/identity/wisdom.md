@@ -1,5 +1,5 @@
 ---
-last_updated: 2026-06-15T14:37:49.174Z
+last_updated: 2026-06-15T14:57:28.899Z
 ---
 
 # Team Wisdom
