@@ -3,7 +3,24 @@ using Aspire.Hosting;
 var builder = DistributedApplication.CreateBuilder(args);
 var repoRoot = Path.GetFullPath(Path.Combine(builder.AppHostDirectory, "..", ".."));
 
+// --- TodoList Infrastructure Resources ---
+
+var insights = builder.AddAzureApplicationInsights("app-insights");
+
+var cosmos = builder.AddAzureCosmosDB("cosmos")
+    .RunAsEmulator()
+    .AddDatabase("tododb");
+
+var todoApi = builder.AddProject<Projects.TodoList_Api>("todolist-api")
+    .WithReference(cosmos)
+    .WithReference(insights)
+    .WaitFor(cosmos)
+    .WithExternalHttpEndpoints();
+
+// --- Squad Orchestration ---
+
 // Each squad is its own siloed resource in the Aspire topology.
+// Squad messaging and chat infrastructure below.
 var ideationSquad = builder.AddSquad("ideation-research-planning-squad",
     teamRoot: Path.Combine(repoRoot, "squads", "ideation-research-planning"));
 
@@ -26,7 +43,7 @@ var reviewSquad = builder.AddSquad("review-deployment-squad",
     teamRoot: Path.Combine(repoRoot, "squads", "review-deployment"));
 
 // Messaging API service (HTTP endpoints for inter-squad communication)
-var messagingApi = builder.AddProject<Projects.BrutalGames_MessagingApi>("messaging-api")
+var messagingApi = builder.AddProject<Projects.AspireWithSquad_MessagingApi>("messaging-api")
     .WithHttpEndpoint(port: 5001)
     .WithEnvironment("SQUAD_MESSAGES_DB", Path.Combine(repoRoot, "squad-messages.db"))
     .WithEnvironment("OTEL_EXPORTER_OTLP_ENDPOINT", Environment.GetEnvironmentVariable("DOTNET_DASHBOARD_OTLP_ENDPOINT_URL") ?? "https://localhost:21117")

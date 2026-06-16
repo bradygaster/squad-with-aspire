@@ -1,6 +1,7 @@
 using Aspire.Hosting;
-using BrutalGames.MessagingApi;
+using AspireWithSquad.MessagingApi;
 using GitHub.Copilot;
+using Microsoft.Extensions.AI;
 using OpenTelemetry;
 using Squad.Agents.AI;
 
@@ -16,8 +17,7 @@ builder.Services.AddSquadMessaging(dbPath);
 
 // Register real SquadAgent instances (one per squad) via keyed DI.
 // Connection strings are injected by Aspire AppHost via WithReference().
-// Each agent gets the messaging bus MCP tools so they can talk to other squads and the user.
-var extensionPath = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, "..", "..", ".github", "extensions", "squad-messaging", "extension.mjs"));
+// Each agent gets a native squad_send_message tool so they can DM other squads directly.
 
 var squadNames = new[]
 {
@@ -32,17 +32,32 @@ var squadNames = new[]
 
 foreach (var squadName in squadNames)
 {
+    var capturedName = squadName; // capture for closure
     builder.Services.AddKeyedSquadAgent(squadName, options =>
     {
         options.ConfigureSession = session =>
         {
-            session.McpServers ??= new Dictionary<string, McpServerConfig>();
-            session.McpServers.Add("squad-bus", new McpStdioServerConfig
-            {
-                Command = "node",
-                Args = [extensionPath],
-                Env = new Dictionary<string, string> { ["MESSAGING_API_URL"] = "http://localhost:5001" },
-            });
+            session.Tools ??= [];
+            session.Tools.Add(CopilotTool.DefineTool(
+                async (string to, string body, string? subject) =>
+                {
+                    using var client = new HttpClient();
+                    var payload = new { from = capturedName, to, subject = subject ?? body[..Math.Min(50, body.Length)], body };
+                    var response = await client.PostAsJsonAsync("http://localhost:5001/api/messages", payload);
+                    if (!response.IsSuccessStatusCode)
+                        return $"Failed to send: {response.StatusCode}";
+                    return "Message sent successfully";
+                },
+                new CopilotToolOptions { SkipPermission = true },
+                new AIFunctionFactoryOptions
+                {
+                    Name = "squad_send_message",
+                    Description = "Send a DM to another squad or to the user. MUST be called to actually deliver a message — writing @squad-name in your response text does nothing. The 'to' parameter is the recipient squad name (e.g. 'experience-design-squad') or 'user'. The 'body' parameter is the message content.",
+                }));
+        };
+        options.OnSubagentTrace = traceEvent =>
+        {
+            Console.WriteLine($"[{capturedName}] {traceEvent.Kind}: {traceEvent.SubagentName ?? ""} {traceEvent.RawEventType}");
         };
     });
 }

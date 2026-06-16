@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/AspireWithSquad.AppHost/AspireWithSquad.AppHost.csproj" />
+    <Project Path="src/AspireWithSquad.MessagingApi.Tests/AspireWithSquad.MessagingApi.Tests.csproj" />
+    <Project Path="src/AspireWithSquad.MessagingApi/AspireWithSquad.MessagingApi.csproj" />
+    <Project Path="src/CommunityToolkit.Aspire.Hosting.Squad/CommunityToolkit.Aspire.Hosting.Squad.csproj" />
+  </Folder>
+</Solution>
