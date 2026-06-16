@@ -25,6 +25,7 @@ resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2024-02-15-preview
     ]
     minimalTlsVersion: 'Tls12'
     disableLocalAuth: true
+    publicNetworkAccess: 'Disabled'
   }
 }
 

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Todo List</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <main class="container">
+        <header>
+            <h1>Todo List</h1>
+        </header>
+
+        <div class="input-area">
+            <input type="text" id="todo-input" placeholder="What needs to be done?" aria-label="New todo text">
+            <button id="add-btn" type="button">Add</button>
+        </div>
+
+        <ul id="todo-list" class="todo-list" aria-label="Todo items"></ul>
+
+        <div id="empty-state" class="empty-state" hidden>
+            <span class="empty-icon">📝</span>
+            <p>No todos yet. Add one above!</p>
+        </div>
+
+        <footer id="footer" class="footer" hidden>
+            <span id="item-count"></span>
+            <div class="filters" role="tablist" aria-label="Filter todos">
+                <button class="filter-btn active" data-filter="all" role="tab" aria-selected="true">All</button>
+                <button class="filter-btn" data-filter="active" role="tab" aria-selected="false">Active</button>
+                <button class="filter-btn" data-filter="completed" role="tab" aria-selected="false">Completed</button>
+            </div>
+        </footer>
+    </main>
+
+    <script src="js/app.js"></script>
+</body>
+</html>
