@@ -84,4 +84,9 @@ export async function getAllConfig(): Promise<Record<string, string>> {
   return parseJsonResponse<Record<string, string>>(response)
 }
 
+export async function getSquads(): Promise<string[]> {
+  const response = await fetch(buildUrl('/api/squads'))
+  return parseJsonResponse<string[]>(response)
+}
+
 export { API_BASE_URL }

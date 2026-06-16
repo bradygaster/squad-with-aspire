@@ -89,4 +89,7 @@ app.UseCors();
 app.MapSquadMessagingApi();
 app.MapSquadConfigApi();
 
+// Expose the registered squad list so the UI doesn't hardcode names
+app.MapGet("/api/squads", () => squadNames);
+
 app.Run();

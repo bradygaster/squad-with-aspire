@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import './App.css'
-import { clearMessages as clearMessagesApi, sendMessage } from './api'
+import { clearMessages as clearMessagesApi, getSquads, sendMessage } from './api'
 import { ChatThread } from './components/ChatThread'
 import { ComposeBar } from './components/ComposeBar'
 import { RepoPickerModal } from './components/RepoPickerModal'
@@ -8,38 +8,18 @@ import { SquadPresenceBar } from './components/SquadPresenceBar'
 import { useMessageStream } from './hooks/useMessageStream'
 import type { Squad, SquadMessage } from './types'
 
-const SQUAD_COLORS: Record<string, string> = {
-  user: '#7aa2ff',
-  coordinator: '#9b87f5',
-  'ideation-research-planning-squad': '#f4a261',
-  'experience-design-squad': '#5ad1e6',
-  'application-development-squad': '#7bd88f',
-  'azure-infrastructure-squad': '#ff7aa2',
-  'quality-testing-squad': '#e6c75a',
-  'security-hardening-squad': '#d97af5',
-  'review-deployment-squad': '#7af5b8',
+// Generate a color from a squad name deterministically
+const PALETTE = ['#f4a261', '#5ad1e6', '#7bd88f', '#ff7aa2', '#e6c75a', '#d97af5', '#7af5b8', '#f28b82', '#81c995', '#aecbfa']
+
+function squadColor(name: string, index: number): string {
+  return PALETTE[index % PALETTE.length]
 }
 
-const KNOWN_SQUADS = [
-  'ideation-research-planning-squad',
-  'experience-design-squad',
-  'application-development-squad',
-  'azure-infrastructure-squad',
-  'quality-testing-squad',
-  'security-hardening-squad',
-  'review-deployment-squad',
-] as const
-
-type KnownSquad = (typeof KNOWN_SQUADS)[number]
-
-function isKnownSquad(name: string): name is KnownSquad {
-  return KNOWN_SQUADS.includes(name as KnownSquad)
+function buildSquadPattern(squads: string[]): RegExp {
+  if (squads.length === 0) return /(?!)/ // never matches
+  const escaped = squads.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+  return new RegExp(`^@(${escaped})\\b\\s*(.*)$`, 'i')
 }
-
-const DIRECT_SQUAD_PATTERN = new RegExp(
-  `^@(${KNOWN_SQUADS.map((squad) => squad.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\b\\s*(.*)$`,
-  'i',
-)
 
 function mergeMessages(messages: SquadMessage[]): SquadMessage[] {
   const messagesById = new Map(messages.map((message) => [message.id, message]))
@@ -66,17 +46,36 @@ function createLocalMessage(
 }
 
 function App() {
+  const [knownSquads, setKnownSquads] = useState<string[]>([])
   const [targetRepo, setTargetRepo] = useState<string | null>(null)
   const [sentMessages, setSentMessages] = useState<SquadMessage[]>([])
   const [isSending, setIsSending] = useState(false)
   const [waitingForResponse, setWaitingForResponse] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
+
+  // Fetch squad list from API on mount
+  useEffect(() => {
+    getSquads()
+      .then(setKnownSquads)
+      .catch((err) => console.warn('Failed to fetch squads, using empty list:', err))
+  }, [])
+
+  const squadColors = useMemo(() => {
+    const colors: Record<string, string> = { user: '#7aa2ff', coordinator: '#9b87f5' }
+    for (let i = 0; i < knownSquads.length; i++) {
+      colors[knownSquads[i]] = squadColor(knownSquads[i], i)
+    }
+    return colors
+  }, [knownSquads])
+
+  const directSquadPattern = useMemo(() => buildSquadPattern(knownSquads), [knownSquads])
+
   const handleStreamMessages = useCallback((incomingMessages: SquadMessage[]) => {
-    if (incomingMessages.some((message) => isKnownSquad(message.from))) {
+    if (incomingMessages.some((message) => knownSquads.includes(message.from))) {
       setWaitingForResponse(false)
     }
-  }, [])
+  }, [knownSquads])
   const {
     messages: streamedMessages,
     clearMessages: clearStreamedMessages,
@@ -104,7 +103,7 @@ function App() {
         // Show coordinator's acknowledgment (TO user)
         if (msg.from === 'coordinator' && msg.to === 'user') return true
         // Show squad replies (TO user or TO coordinator, i.e. replies up the chain)
-        if (isKnownSquad(msg.from)) return true
+        if (knownSquads.includes(msg.from)) return true
         // Hide coordinator-to-squad routing (internal dispatch)
         return false
       }),
@@ -112,7 +111,7 @@ function App() {
   )
 
   const squads = useMemo<Squad[]>(() => {
-    return KNOWN_SQUADS.map((name) => {
+    return knownSquads.map((name) => {
       const unreadCount = messages.filter(
         (message) => message.from === name && !message.isRead,
       ).length
@@ -127,12 +126,12 @@ function App() {
 
       return {
         name,
-        color: SQUAD_COLORS[name],
+        color: squadColors[name],
         isActive,
         unreadCount,
       }
     })
-  }, [messages, now])
+  }, [messages, now, knownSquads, squadColors])
 
   const handleSend = async (body: string) => {
     setIsSending(true)
@@ -154,7 +153,7 @@ function App() {
           'coordinator',
           'user',
           'squads',
-          `Available squads:\n${KNOWN_SQUADS.map((squad) => `- ${squad}`).join('\n')}`,
+          `Available squads:\n${knownSquads.map((squad) => `- ${squad}`).join('\n')}`,
         )
         setSentMessages((currentMessages) =>
           mergeMessages([...currentMessages, squadsMessage]),
@@ -169,7 +168,7 @@ function App() {
       if (trimmedBody.startsWith('/status')) {
         outboundBody = 'what is your current status?'
       } else {
-        const directMessageMatch = trimmedBody.match(DIRECT_SQUAD_PATTERN)
+        const directMessageMatch = trimmedBody.match(directSquadPattern)
         if (directMessageMatch) {
           destination = directMessageMatch[1].toLowerCase()
           outboundBody = directMessageMatch[2].trim()
@@ -212,13 +211,13 @@ function App() {
         <ChatThread
           isWaiting={waitingForResponse}
           messages={messages}
-          squadColors={SQUAD_COLORS}
+          squadColors={squadColors}
         />
       </main>
 
       {errorMessage ? <div className="app-error">{errorMessage}</div> : null}
 
-      <ComposeBar disabled={isSending} onSend={handleSend} squads={KNOWN_SQUADS} />
+      <ComposeBar disabled={isSending} onSend={handleSend} squads={knownSquads} />
     </div>
   )
 }
