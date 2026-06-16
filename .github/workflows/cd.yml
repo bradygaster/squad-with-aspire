@@ -1,8 +1,12 @@
-name: CD
+name: CD - Deploy to Azure Container Apps
 
 on:
   push:
     branches: [main]
+    paths:
+      - 'src/**'
+      - 'infra/**'
+      - '.github/workflows/cd.yml'
   workflow_dispatch:
 
 permissions:
@@ -10,16 +14,14 @@ permissions:
   contents: read
 
 env:
-  AZURE_RESOURCE_GROUP: rg-todo-app
-  ACR_NAME: todoappcr
-  CONTAINER_APP_NAME: todo-app
-  IMAGE_NAME: todo-app
+  IMAGE_NAME: todo-api
 
 jobs:
   deploy-infra:
     runs-on: ubuntu-latest
     outputs:
       acr-login-server: ${{ steps.deploy.outputs.acrLoginServer }}
+      container-app-name: ${{ steps.deploy.outputs.containerAppName }}
     steps:
       - uses: actions/checkout@v4
 
@@ -42,11 +44,12 @@ jobs:
         id: deploy
         run: |
           result=$(az deployment group create \
-            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
             --template-file infra/main.bicep \
             --parameters infra/main.bicepparam \
             --query 'properties.outputs' -o json)
           echo "acrLoginServer=$(echo $result | jq -r '.acrLoginServer.value')" >> "$GITHUB_OUTPUT"
+          echo "containerAppName=$(echo $result | jq -r '.containerAppName.value')" >> "$GITHUB_OUTPUT"
 
   build-and-push:
     runs-on: ubuntu-latest
@@ -62,12 +65,13 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Login to ACR
-        run: az acr login --name ${{ env.ACR_NAME }}
+        run: az acr login --name $(echo "${{ needs.deploy-infra.outputs.acr-login-server }}" | cut -d'.' -f1)
 
       - name: Build and push container image
         run: |
-          docker build -t ${{ needs.deploy-infra.outputs.acr-login-server }}/${{ env.IMAGE_NAME }}:${{ github.sha }} .
-          docker build -t ${{ needs.deploy-infra.outputs.acr-login-server }}/${{ env.IMAGE_NAME }}:latest .
+          docker build -t ${{ needs.deploy-infra.outputs.acr-login-server }}/${{ env.IMAGE_NAME }}:${{ github.sha }} \
+                       -t ${{ needs.deploy-infra.outputs.acr-login-server }}/${{ env.IMAGE_NAME }}:latest \
+                       -f src/TodoApi/Dockerfile .
           docker push ${{ needs.deploy-infra.outputs.acr-login-server }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           docker push ${{ needs.deploy-infra.outputs.acr-login-server }}/${{ env.IMAGE_NAME }}:latest
 
@@ -85,6 +89,6 @@ jobs:
       - name: Deploy to Container App
         run: |
           az containerapp update \
-            --name ${{ env.CONTAINER_APP_NAME }} \
-            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --name ${{ needs.deploy-infra.outputs.container-app-name }} \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }} \
             --image ${{ needs.deploy-infra.outputs.acr-login-server }}/${{ env.IMAGE_NAME }}:${{ github.sha }}

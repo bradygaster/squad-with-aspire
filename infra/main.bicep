@@ -52,60 +52,95 @@ module cosmosDb 'modules/cosmos-db.bicep' = {
   }
 }
 
-// Store Cosmos DB connection string in Key Vault
-module cosmosSecret 'modules/key-vault-secret.bicep' = {
-  name: 'cosmosSecret'
-  params: {
-    keyVaultName: keyVault.outputs.name
-    secretName: 'CosmosDbConnectionString'
-    secretValue: cosmosDb.outputs.connectionString
-  }
-}
+// Cosmos DB uses RBAC-only access via managed identity — no connection string secrets needed
 
-// Azure Container Apps Environment + App
-module containerApp 'modules/container-apps.bicep' = {
-  name: 'containerApp'
+// Container Apps Environment
+module containerAppsEnv 'modules/container-apps-env.bicep' = {
+  name: 'containerAppsEnv'
   params: {
-    name: resourcePrefix
+    name: 'cae-${resourcePrefix}'
     location: location
-    containerImage: containerImage
     logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
-    appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
-    cosmosDbEndpoint: cosmosDb.outputs.endpoint
-    keyVaultUri: keyVault.outputs.uri
-    acrLoginServer: acr.outputs.loginServer
   }
 }
 
-// Grant Container App's managed identity access to Cosmos DB
+// Todo API Container App (ASP.NET Core 8 Web API)
+module todoApi 'modules/container-app.bicep' = {
+  name: 'todoApi'
+  params: {
+    name: 'todoapi'
+    location: location
+    containerAppsEnvironmentId: containerAppsEnv.outputs.id
+    acrLoginServer: acr.outputs.loginServer
+    cosmosDbEndpoint: cosmosDb.outputs.endpoint
+    appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
+    keyVaultUri: keyVault.outputs.uri
+    external: true
+    targetPort: 8080
+  }
+}
+
+// Todo Web Container App (Blazor WebAssembly frontend)
+module todoWeb 'modules/container-app.bicep' = {
+  name: 'todoWeb'
+  params: {
+    name: 'todoweb'
+    location: location
+    containerAppsEnvironmentId: containerAppsEnv.outputs.id
+    acrLoginServer: acr.outputs.loginServer
+    cosmosDbEndpoint: ''
+    appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
+    keyVaultUri: keyVault.outputs.uri
+    external: true
+    targetPort: 8080
+  }
+}
+
+// Grant todoapi managed identity access to Cosmos DB (data contributor - no connection strings)
 module cosmosRoleAssignment 'modules/cosmos-role-assignment.bicep' = {
   name: 'cosmosRoleAssignment'
   params: {
     cosmosDbAccountName: cosmosDb.outputs.accountName
-    principalId: containerApp.outputs.identityPrincipalId
+    principalId: todoApi.outputs.identityPrincipalId
   }
 }
 
-// Grant Container App's managed identity access to Key Vault
-module keyVaultAccess 'modules/key-vault-access.bicep' = {
-  name: 'keyVaultAccess'
+// Grant both apps access to Key Vault secrets
+module keyVaultAccessApi 'modules/key-vault-access.bicep' = {
+  name: 'keyVaultAccessApi'
   params: {
     keyVaultName: keyVault.outputs.name
-    principalId: containerApp.outputs.identityPrincipalId
+    principalId: todoApi.outputs.identityPrincipalId
   }
 }
 
-// Grant Container App's managed identity pull access to ACR
-module acrPull 'modules/acr-pull-role.bicep' = {
-  name: 'acrPull'
+module keyVaultAccessWeb 'modules/key-vault-access.bicep' = {
+  name: 'keyVaultAccessWeb'
+  params: {
+    keyVaultName: keyVault.outputs.name
+    principalId: todoWeb.outputs.identityPrincipalId
+  }
+}
+
+// Grant both apps pull access to ACR
+module acrPullApi 'modules/acr-pull-role.bicep' = {
+  name: 'acrPullApi'
   params: {
     acrName: acr.outputs.name
-    principalId: containerApp.outputs.identityPrincipalId
+    principalId: todoApi.outputs.identityPrincipalId
   }
 }
 
-output containerAppFqdn string = containerApp.outputs.fqdn
-output containerAppUrl string = 'https://${containerApp.outputs.fqdn}'
+module acrPullWeb 'modules/acr-pull-role.bicep' = {
+  name: 'acrPullWeb'
+  params: {
+    acrName: acr.outputs.name
+    principalId: todoWeb.outputs.identityPrincipalId
+  }
+}
+
+output todoApiUrl string = 'https://${todoApi.outputs.fqdn}'
+output todoWebUrl string = 'https://${todoWeb.outputs.fqdn}'
 output acrLoginServer string = acr.outputs.loginServer
 output cosmosDbEndpoint string = cosmosDb.outputs.endpoint
 output keyVaultUri string = keyVault.outputs.uri

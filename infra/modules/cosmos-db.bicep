@@ -24,7 +24,7 @@ resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2024-02-15-preview
       }
     ]
     minimalTlsVersion: 'Tls12'
-    disableLocalAuth: false
+    disableLocalAuth: true
   }
 }
 
@@ -40,10 +40,10 @@ resource database 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2024-02-15
 
 resource container 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-02-15-preview' = {
   parent: database
-  name: 'Todos'
+  name: 'Items'
   properties: {
     resource: {
-      id: 'Todos'
+      id: 'Items'
       partitionKey: {
         paths: ['/userId']
         kind: 'Hash'
@@ -68,6 +68,6 @@ resource container 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/container
 
 output accountName string = cosmosAccount.name
 output endpoint string = cosmosAccount.properties.documentEndpoint
-output connectionString string = cosmosAccount.listConnectionStrings().connectionStrings[0].connectionString
+// No connection string output — RBAC-only access via managed identity
 output databaseName string = database.properties.resource.id
 output containerName string = container.properties.resource.id
