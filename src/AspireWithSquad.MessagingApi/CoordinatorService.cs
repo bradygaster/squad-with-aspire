@@ -242,9 +242,9 @@ public sealed class CoordinatorService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "SquadAgent dispatch failed for '{Squad}'", squadName);
+            _logger.LogError(ex, "SquadAgent dispatch failed for '{Squad}': {Error}", squadName, ex.Message);
             await _bus.ReplyAsync(message.Id, squadName,
-                $"⚠️ {squadName} encountered an error processing your request.", ct);
+                $"⚠️ {squadName} error: {ex.Message}", ct);
         }
     }
 
