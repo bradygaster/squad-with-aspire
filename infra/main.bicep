@@ -45,9 +45,11 @@ module containerApps 'modules/container-apps.bicep' = {
     location: location
     apiImage: apiImage
     webImage: webImage
-    cosmosDbConnectionString: cosmosDb.outputs.connectionString
+    cosmosDbEndpoint: cosmosDb.outputs.endpoint
+    cosmosDbAccountId: cosmosDb.outputs.accountId
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
     keyVaultUri: keyVault.outputs.vaultUri
+    logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
   }
 }
 

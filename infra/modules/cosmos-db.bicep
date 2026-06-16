@@ -24,6 +24,8 @@ resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' = {
       defaultConsistencyLevel: 'Session'
     }
     enableFreeTier: true
+    disableLocalAuth: true
+    minimalTlsVersion: 'Tls12'
     capabilities: [
       {
         name: 'EnableServerless'
@@ -68,6 +70,6 @@ resource container 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/container
 
 output endpoint string = cosmosAccount.properties.documentEndpoint
 output accountName string = cosmosAccount.name
+output accountId string = cosmosAccount.id
 output databaseName string = databaseName
 output containerName string = containerName
-output connectionString string = cosmosAccount.listConnectionStrings().connectionStrings[0].connectionString
