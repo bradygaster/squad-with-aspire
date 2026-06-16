@@ -5,6 +5,9 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="TodoApi.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Aspire.Microsoft.Azure.Cosmos" Version="9.5.2" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.0" />
   </ItemGroup>
