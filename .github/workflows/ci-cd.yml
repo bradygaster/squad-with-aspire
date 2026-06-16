@@ -1,0 +1,99 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_VERSION: "10.0.x"
+  DOTNET_QUALITY: "preview"
+  SOLUTION_FILE: SquadWithAspire.slnx
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-quality: ${{ env.DOTNET_QUALITY }}
+
+      - name: Restore dependencies
+        run: dotnet restore ${{ env.SOLUTION_FILE }}
+
+      - name: Build
+        run: dotnet build ${{ env.SOLUTION_FILE }} --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test ${{ env.SOLUTION_FILE }} --no-build --configuration Release --verbosity normal
+
+  build-images:
+    name: Build & Push Container Images
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    strategy:
+      matrix:
+        include:
+          - app: todolist-api
+            context: .
+            dockerfile: src/TodoApi/Dockerfile
+          - app: todolist-web
+            context: .
+            dockerfile: src/TodoWeb/Dockerfile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Azure Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ secrets.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ${{ secrets.ACR_LOGIN_SERVER }}/${{ matrix.app }}:${{ github.sha }}
+            ${{ secrets.ACR_LOGIN_SERVER }}/${{ matrix.app }}:latest
+
+  deploy:
+    name: Deploy to Azure Container Apps
+    runs-on: ubuntu-latest
+    needs: build-images
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy infrastructure and apps
+        run: |
+          az deployment group create \
+            --resource-group rg-todolist \
+            --template-file infra/main.bicep \
+            --parameters infra/main.bicepparam \
+            --parameters \
+              apiImage='${{ secrets.ACR_LOGIN_SERVER }}/todolist-api:${{ github.sha }}' \
+              webImage='${{ secrets.ACR_LOGIN_SERVER }}/todolist-web:${{ github.sha }}'
