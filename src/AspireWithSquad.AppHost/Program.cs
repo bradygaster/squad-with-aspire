@@ -9,7 +9,7 @@ var todoAppApi = builder.AddProject<Projects.TodoApp_Api>("todoapi")
     .WithHttpEndpoint(port: 5002)
     .WithExternalHttpEndpoints();
 
-builder.AddNpmApp("todo-app-ui", Path.Combine(repoRoot, "src", "todo-app-ui"), "dev")
+builder.AddNpmApp("todo-frontend", Path.Combine(repoRoot, "src", "todo-frontend"), "dev")
     .WithReference(todoAppApi)
     .WaitFor(todoAppApi)
     .WithHttpEndpoint(env: "PORT", port: 5174)
