@@ -11,6 +11,7 @@
   <ItemGroup>
     <ProjectReference Include="..\CommunityToolkit.Aspire.Hosting.Squad\CommunityToolkit.Aspire.Hosting.Squad.csproj" IsAspireProjectResource="false" />
     <ProjectReference Include="..\AspireWithSquad.MessagingApi\AspireWithSquad.MessagingApi.csproj" />
+    <ProjectReference Include="..\TodoApi\TodoApi.csproj" />
   </ItemGroup>
 
   <ItemGroup>

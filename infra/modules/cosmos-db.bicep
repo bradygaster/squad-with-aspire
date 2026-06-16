@@ -4,9 +4,6 @@ param name string
 @description('Azure region')
 param location string
 
-@description('Autoscale max throughput in RU/s')
-param maxThroughput int = 1000
-
 resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2024-02-15-preview' = {
   name: name
   location: location
@@ -21,6 +18,11 @@ resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2024-02-15-preview
         locationName: location
         failoverPriority: 0
         isZoneRedundant: false
+      }
+    ]
+    capabilities: [
+      {
+        name: 'EnableServerless'
       }
     ]
     minimalTlsVersion: 'Tls12'
@@ -57,11 +59,6 @@ resource container 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/container
         excludedPaths: [
           { path: '/"_etag"/?' }
         ]
-      }
-    }
-    options: {
-      autoscaleSettings: {
-        maxThroughput: maxThroughput
       }
     }
   }

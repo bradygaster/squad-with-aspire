@@ -3,18 +3,16 @@ using Aspire.Hosting;
 var builder = DistributedApplication.CreateBuilder(args);
 var repoRoot = Path.GetFullPath(Path.Combine(builder.AppHostDirectory, "..", ".."));
 
-// --- TodoList Infrastructure Resources ---
+// --- Todo Application ---
 
-var insights = builder.AddAzureApplicationInsights("app-insights");
+var todoAppApi = builder.AddProject<Projects.TodoApp_Api>("todoapi")
+    .WithHttpEndpoint(port: 5002)
+    .WithExternalHttpEndpoints();
 
-var cosmos = builder.AddAzureCosmosDB("cosmos")
-    .RunAsEmulator()
-    .AddDatabase("tododb");
-
-var todoApi = builder.AddProject<Projects.TodoList_Api>("todolist-api")
-    .WithReference(cosmos)
-    .WithReference(insights)
-    .WaitFor(cosmos)
+builder.AddNpmApp("todo-app-ui", Path.Combine(repoRoot, "src", "todo-app-ui"), "dev")
+    .WithReference(todoAppApi)
+    .WaitFor(todoAppApi)
+    .WithHttpEndpoint(env: "PORT", port: 5174)
     .WithExternalHttpEndpoints();
 
 // --- Squad Orchestration ---

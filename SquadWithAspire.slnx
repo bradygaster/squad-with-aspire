@@ -5,4 +5,9 @@
     <Project Path="src/AspireWithSquad.MessagingApi/AspireWithSquad.MessagingApi.csproj" />
     <Project Path="src/CommunityToolkit.Aspire.Hosting.Squad/CommunityToolkit.Aspire.Hosting.Squad.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TodoApi.Tests/TodoApi.Tests.csproj" />
+    <Project Path="tests/TodoApi.IntegrationTests/TodoApi.IntegrationTests.csproj" />
+    <Project Path="tests/TodoApp.E2E/TodoApp.E2E.csproj" />
+  </Folder>
 </Solution>

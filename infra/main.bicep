@@ -6,14 +6,24 @@ param appName string = 'todo'
 @description('The Azure region for all resources')
 param location string = resourceGroup().location
 
-@description('The container image to deploy (e.g., myacr.azurecr.io/todoapi:latest)')
-param containerImage string = ''
-
 @description('Cosmos DB autoscale max throughput (RU/s)')
 param cosmosMaxThroughput int = 1000
 
 var uniqueSuffix = uniqueString(resourceGroup().id, appName)
 var resourcePrefix = '${appName}-${uniqueSuffix}'
+var tags = {
+  application: 'todo-app'
+  managedBy: 'bicep'
+}
+
+// Networking (VNet for Container Apps + private endpoints)
+module networking 'modules/networking.bicep' = {
+  name: 'networking'
+  params: {
+    location: location
+    resourceToken: uniqueSuffix
+  }
+}
 
 // Log Analytics Workspace + Application Insights
 module monitoring 'modules/app-insights.bicep' = {
@@ -42,7 +52,7 @@ module keyVault 'modules/key-vault.bicep' = {
   }
 }
 
-// Azure Cosmos DB
+// Azure Cosmos DB (RBAC-only, no connection strings)
 module cosmosDb 'modules/cosmos-db.bicep' = {
   name: 'cosmosDb'
   params: {
@@ -52,51 +62,54 @@ module cosmosDb 'modules/cosmos-db.bicep' = {
   }
 }
 
-// Cosmos DB uses RBAC-only access via managed identity — no connection string secrets needed
-
-// Container Apps Environment
-module containerAppsEnv 'modules/container-apps-env.bicep' = {
+// Container Apps Environment with VNet integration
+module containerAppsEnv 'modules/container-apps-environment.bicep' = {
   name: 'containerAppsEnv'
   params: {
     name: 'cae-${resourcePrefix}'
     location: location
     logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
+    appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
+    infrastructureSubnetId: networking.outputs.infrastructureSubnetId
+    tags: tags
   }
 }
 
-// Todo API Container App (ASP.NET Core 8 Web API)
+// Todo API (internal, accessed by the web frontend)
 module todoApi 'modules/container-app.bicep' = {
   name: 'todoApi'
   params: {
     name: 'todoapi'
     location: location
+    tags: tags
     containerAppsEnvironmentId: containerAppsEnv.outputs.id
     acrLoginServer: acr.outputs.loginServer
-    cosmosDbEndpoint: cosmosDb.outputs.endpoint
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
+    cosmosDbEndpoint: cosmosDb.outputs.endpoint
     keyVaultUri: keyVault.outputs.uri
-    external: true
+    external: false
     targetPort: 8080
   }
 }
 
-// Todo Web Container App (Blazor WebAssembly frontend)
+// Todo Web Frontend (external, public-facing)
 module todoWeb 'modules/container-app.bicep' = {
   name: 'todoWeb'
   params: {
     name: 'todoweb'
     location: location
+    tags: tags
     containerAppsEnvironmentId: containerAppsEnv.outputs.id
     acrLoginServer: acr.outputs.loginServer
-    cosmosDbEndpoint: ''
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
+    cosmosDbEndpoint: ''
     keyVaultUri: keyVault.outputs.uri
     external: true
     targetPort: 8080
   }
 }
 
-// Grant todoapi managed identity access to Cosmos DB (data contributor - no connection strings)
+// Grant API managed identity access to Cosmos DB (Data Contributor)
 module cosmosRoleAssignment 'modules/cosmos-role-assignment.bicep' = {
   name: 'cosmosRoleAssignment'
   params: {
@@ -105,20 +118,12 @@ module cosmosRoleAssignment 'modules/cosmos-role-assignment.bicep' = {
   }
 }
 
-// Grant both apps access to Key Vault secrets
+// Grant API managed identity access to Key Vault secrets
 module keyVaultAccessApi 'modules/key-vault-access.bicep' = {
   name: 'keyVaultAccessApi'
   params: {
     keyVaultName: keyVault.outputs.name
     principalId: todoApi.outputs.identityPrincipalId
-  }
-}
-
-module keyVaultAccessWeb 'modules/key-vault-access.bicep' = {
-  name: 'keyVaultAccessWeb'
-  params: {
-    keyVaultName: keyVault.outputs.name
-    principalId: todoWeb.outputs.identityPrincipalId
   }
 }
 

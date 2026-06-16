@@ -28,6 +28,9 @@ param external bool = true
 @description('Container target port')
 param targetPort int = 8080
 
+@description('CORS allowed origins (empty array disables CORS policy)')
+param corsAllowedOrigins array = []
+
 resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
   name: name
   location: location
@@ -43,6 +46,12 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
         targetPort: targetPort
         transport: 'http'
         allowInsecure: false
+        corsPolicy: !empty(corsAllowedOrigins) ? {
+          allowedOrigins: corsAllowedOrigins
+          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+          allowedHeaders: ['Content-Type', 'Authorization']
+          maxAge: 3600
+        } : null
       }
       registries: [
         {

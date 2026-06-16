@@ -44,12 +44,12 @@ api.MapPost("/", (CreateTodoRequest req, TodoService svc) =>
     if (req.Title.Length > 200)
         return Results.BadRequest(new { error = "Title must be 200 characters or fewer" });
 
-    var item = svc.Create(req.Title.Trim());
+    var item = svc.Create(req.Title.Trim(), req.Description?.Trim());
     return Results.Created($"/api/todos/{item.Id}", item);
 });
 
 api.MapPut("/{id}", (string id, UpdateTodoRequest req, TodoService svc) =>
-    svc.Update(id, req.Title, req.IsComplete) is { } todo
+    svc.Update(id, req.Title, req.IsComplete, req.Description) is { } todo
         ? Results.Ok(todo)
         : Results.NotFound());
 
