@@ -1,0 +1,22 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.4.3">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Description>Aspire AppHost for AspireWithSquad.online — orchestrates 4 Squad AI-agent teams.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\CommunityToolkit.Aspire.Hosting.Squad\CommunityToolkit.Aspire.Hosting.Squad.csproj" IsAspireProjectResource="false" />
+    <ProjectReference Include="..\AspireWithSquad.MessagingApi\AspireWithSquad.MessagingApi.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.Azure.CosmosDB" Version="9.5.2" />
+    <PackageReference Include="Aspire.Hosting.Azure.ApplicationInsights" Version="9.5.2" />
+    <PackageReference Include="Aspire.Hosting.NodeJs" Version="9.5.2" />
+  </ItemGroup>
+
+</Project>
