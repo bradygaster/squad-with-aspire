@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useCallback } from 'react'
 import type { SquadMessage } from '../types'
 import { MessageBubble } from './MessageBubble'
 
@@ -9,7 +9,9 @@ interface ChatThreadProps {
 }
 
 export function ChatThread({ messages, squadColors, isWaiting }: ChatThreadProps) {
+  const containerRef = useRef<HTMLDivElement | null>(null)
   const bottomAnchorRef = useRef<HTMLDivElement | null>(null)
+  const isNearBottomRef = useRef(true)
 
   const sortedMessages = useMemo(
     () =>
@@ -19,12 +21,22 @@ export function ChatThread({ messages, squadColors, isWaiting }: ChatThreadProps
     [messages],
   )
 
+  const handleScroll = useCallback(() => {
+    const el = containerRef.current
+    if (!el) return
+    // "Near bottom" = within 150px of the bottom
+    isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 150
+  }, [])
+
   useEffect(() => {
-    bottomAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [isWaiting, sortedMessages])
+    // Only auto-scroll if the user is already near the bottom
+    if (isNearBottomRef.current) {
+      bottomAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    }
+  }, [sortedMessages, isWaiting])
 
   return (
-    <section className="chat-thread" aria-label="Conversation thread">
+    <section className="chat-thread" ref={containerRef} onScroll={handleScroll} aria-label="Conversation thread">
       {sortedMessages.length === 0 ? (
         <div className="chat-thread__empty">
           <h2>Squads are standing by</h2>

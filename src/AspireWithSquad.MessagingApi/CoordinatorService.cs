@@ -208,32 +208,36 @@ public sealed class CoordinatorService : BackgroundService
             activity?.SetTag("messaging.to", squadName);
             activity?.SetTag("messaging.body.preview", message.Body[..Math.Min(80, message.Body.Length)]);
 
-            // Get or create a persistent session for this squad
-            var session = await GetOrCreateSessionAsync(agent, squadName, ct);
-
-            // Build prompt with recent chat history for context
             var contextualPrompt = await BuildContextualPrompt(squadName, message, ct);
 
-            _logger.LogInformation("Dispatching to SquadAgent '{Squad}' with history context", squadName);
+            _logger.LogInformation("Dispatching to SquadAgent '{Squad}' (ephemeral session)", squadName);
 
-            // MCP tool calls happen inside RunAsync — wrap in a child span
             using var mcpActivity = ActivitySource.StartActivity(
-                $"{squadName} MCP session",
+                $"{squadName} session",
                 ActivityKind.Client);
-            mcpActivity?.SetTag("mcp.server", "squad-bus");
-            mcpActivity?.SetTag("mcp.tools", "squad_send_message, squad_read_recent_messages, squad_read_inbox");
 
-            var response = await agent.RunAsync(contextualPrompt, session, options: null, cancellationToken: ct);
+            var response = await agent.RunAsync(contextualPrompt, session: null, options: null, cancellationToken: ct);
 
-            mcpActivity?.SetTag("mcp.response.length", response.Text?.Length ?? 0);
-            activity?.SetTag("squad.response.length", response.Text?.Length ?? 0);
+            mcpActivity?.SetTag("response.length", response.Text?.Length ?? 0);
 
             if (!string.IsNullOrWhiteSpace(response.Text))
             {
-                await _bus.ReplyAsync(message.Id, squadName, response.Text, ct);
-                activity?.AddEvent(new ActivityEvent($"{squadName} → {message.From} (reply)"));
-                _logger.LogInformation("Squad '{Squad}' replied: {Preview}",
-                    squadName, response.Text[..Math.Min(100, response.Text.Length)]);
+                // Extract and persist any knowledge before sending the reply
+                var (visibleReply, knowledge) = ExtractKnowledge(response.Text);
+
+                if (!string.IsNullOrWhiteSpace(knowledge))
+                {
+                    await AppendKnowledge(squadName, knowledge, ct);
+                    activity?.AddEvent(new ActivityEvent($"{squadName} learned"));
+                }
+
+                if (!string.IsNullOrWhiteSpace(visibleReply))
+                {
+                    await _bus.ReplyAsync(message.Id, squadName, visibleReply.Trim(), ct);
+                    activity?.AddEvent(new ActivityEvent($"{squadName} → {message.From} (reply)"));
+                    _logger.LogInformation("Squad '{Squad}' replied: {Preview}",
+                        squadName, visibleReply[..Math.Min(100, visibleReply.Length)]);
+                }
             }
         }
         catch (Exception ex)
@@ -244,23 +248,61 @@ public sealed class CoordinatorService : BackgroundService
         }
     }
 
-    private Task<AgentSession?> GetOrCreateSessionAsync(SquadAgent agent, string squadName, CancellationToken ct)
+    /// <summary>
+    /// Extracts <knowledge>...</knowledge> blocks from the agent response.
+    /// Returns the visible reply (without the block) and the knowledge content.
+    /// </summary>
+    internal static (string visibleReply, string? knowledge) ExtractKnowledge(string responseText)
     {
-        // SquadAgent manages its own session lifecycle internally.
-        // We pass null to let it handle persistent session state.
-        return Task.FromResult<AgentSession?>(null);
+        var match = System.Text.RegularExpressions.Regex.Match(
+            responseText,
+            @"<knowledge>(.*?)</knowledge>",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+
+        if (!match.Success)
+            return (responseText, null);
+
+        var knowledge = match.Groups[1].Value.Trim();
+        var visible = responseText[..match.Index] + responseText[(match.Index + match.Length)..];
+        return (visible.Trim(), knowledge);
+    }
+
+    /// <summary>
+    /// Appends new learnings to the squad's persistent knowledge store.
+    /// Each entry is timestamped so the squad can see when it learned what.
+    /// </summary>
+    private async Task AppendKnowledge(string squadName, string newKnowledge, CancellationToken ct)
+    {
+        var key = $"knowledge:{squadName}";
+        var existing = await _config.GetAsync(key, ct) ?? "";
+        var timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm");
+        var updated = string.IsNullOrWhiteSpace(existing)
+            ? $"[{timestamp}] {newKnowledge}"
+            : $"{existing}\n[{timestamp}] {newKnowledge}";
+
+        // Cap at ~16000 chars to keep prompts reasonable — trim oldest entries
+        if (updated.Length > 16000)
+        {
+            var lines = updated.Split('\n');
+            while (updated.Length > 14000 && lines.Length > 1)
+            {
+                lines = lines[1..];
+                updated = string.Join('\n', lines);
+            }
+        }
+
+        await _config.SetAsync(key, updated, ct);
+        _logger.LogInformation("Knowledge appended for '{Squad}' ({Length} chars total)", squadName, updated.Length);
     }
 
     private async Task<string> BuildContextualPrompt(string squadName, SquadMessage message, CancellationToken ct)
     {
-        // Fetch the target repo so agents operate on the right repository
         var targetRepo = await _config.GetAsync("target-repo", ct);
+        var knowledge = await _config.GetAsync($"knowledge:{squadName}", ct);
 
-        // Pull recent chat history from the bus for context
         var recentMessages = await _bus.GetRecentAsync(20, ct);
-
         var history = recentMessages
-            .Where(m => m.Id != message.Id) // exclude the current message
+            .Where(m => m.Id != message.Id)
             .Select(m => $"[{m.From} → {m.To}]: {m.Body}")
             .ToList();
 
@@ -271,33 +313,31 @@ public sealed class CoordinatorService : BackgroundService
 
             """;
 
-        if (history.Count == 0)
-            return $"""
-            {repoInstruction}Respond as {squadName}.
+        var knowledgeBlock = string.IsNullOrWhiteSpace(knowledge)
+            ? ""
+            : $"""
+            YOUR ACCUMULATED KNOWLEDGE (from prior conversations):
+            ---
+            {knowledge}
+            ---
 
-            RULES:
-            - You get ONE reply to this message. Make it count — be thoughtful and complete.
-            - If a message requires NO action from you (status updates, acknowledgments, "nothing to do"), DO NOT REPLY. Silence is correct.
-            - To send a message to another squad, CALL the squad_send_message tool. Writing "@squad" in text does nothing.
-            - Do NOT send acknowledgment messages like "got it", "nothing actionable", "my turn is done". Just stay silent.
-            - Only reply if you have substantive content to add or a task to hand off.
-
-            Available squads: {string.Join(", ", AllSquads)}
-
-            {message.Body}
             """;
 
-        var contextBlock = string.Join("\n", history.TakeLast(15));
-
-        return $"""
-            {repoInstruction}Here is the recent chat history for context:
+        var contextBlock = history.Count > 0
+            ? $"""
+            Recent chat history:
             ---
-            {contextBlock}
+            {string.Join("\n", history.TakeLast(15))}
             ---
 
             New message from {message.From}: {message.Body}
+            """
+            : message.Body;
 
-            Respond as {squadName}.
+        return $"""
+            {repoInstruction}{knowledgeBlock}Respond as {squadName}.
+
+            {contextBlock}
 
             RULES:
             - You get ONE reply to this message. Make it count — be thoughtful and complete.
@@ -305,6 +345,9 @@ public sealed class CoordinatorService : BackgroundService
             - To send a message to another squad, CALL the squad_send_message tool. Writing "@squad" in text does nothing.
             - Do NOT send acknowledgment messages like "got it", "nothing actionable", "my turn is done". Just stay silent.
             - Only reply if you have substantive content to add or a task to hand off.
+            - After your reply, if you learned anything new (decisions, context, technical details, project state), append a <knowledge> block with a brief summary of what you learned. Example:
+              <knowledge>User wants a todo app with ASP.NET Core. Team agreed on Cosmos DB. Security squad owns auth.</knowledge>
+              If nothing new was learned, omit the block entirely.
 
             Available squads: {string.Join(", ", AllSquads)}
             """;
