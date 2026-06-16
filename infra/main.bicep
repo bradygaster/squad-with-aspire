@@ -49,12 +49,12 @@ module containerApps 'modules/container-apps.bicep' = {
     cosmosDbAccountId: cosmosDb.outputs.accountId
     appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
     keyVaultUri: keyVault.outputs.vaultUri
+    keyVaultName: keyVault.outputs.vaultName
     logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
   }
 }
 
 // --- Outputs ---
-
 output cosmosDbEndpoint string = cosmosDb.outputs.endpoint
 output keyVaultUri string = keyVault.outputs.vaultUri
 output appInsightsConnectionString string = monitoring.outputs.appInsightsConnectionString

@@ -22,6 +22,9 @@ param appInsightsConnectionString string
 @description('Key Vault URI')
 param keyVaultUri string
 
+@description('Key Vault name for RBAC scoping')
+param keyVaultName string
+
 @description('Log Analytics workspace ID')
 param logAnalyticsWorkspaceId string
 
@@ -134,7 +137,6 @@ output apiUrl string = 'https://${apiApp.properties.configuration.ingress.fqdn}'
 output webUrl string = 'https://${webApp.properties.configuration.ingress.fqdn}'
 
 // --- RBAC: Grant API app Cosmos DB data access via managed identity ---
-// Cosmos DB Built-in Data Contributor role
 var cosmosDataContributorRoleId = '00000000-0000-0000-0000-000000000002'
 
 resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' existing = {
@@ -151,11 +153,16 @@ resource apiCosmosRoleAssignment 'Microsoft.DocumentDB/databaseAccounts/sqlRoleA
   }
 }
 
-// --- RBAC: Grant API app Key Vault Secrets User access ---
+// --- RBAC: Grant API app Key Vault Secrets User access (scoped to specific Key Vault) ---
 var keyVaultSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
 
+resource keyVaultRef 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
+  name: keyVaultName
+}
+
 resource apiKeyVaultRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(keyVaultUri, apiApp.id, keyVaultSecretsUserRoleId)
+  name: guid(keyVaultRef.id, apiApp.id, keyVaultSecretsUserRoleId)
+  scope: keyVaultRef
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultSecretsUserRoleId)
     principalId: apiApp.identity.principalId
