@@ -3,22 +3,28 @@ name: CI/CD Pipeline
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'squads/**'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'squads/**'
 
 permissions:
   contents: read
 
 env:
-  DOTNET_VERSION: "10.0.x"
-  DOTNET_QUALITY: "preview"
+  DOTNET_VERSION: '10.0.x'
+  DOTNET_QUALITY: 'preview'
   SOLUTION_FILE: SquadWithAspire.slnx
+  TEST_PROJECT: src/TodoApi.Tests/TodoApi.Tests.csproj
 
 jobs:
-  build-and-test:
-    name: Build & Test
+  build:
+    name: Build
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -31,77 +37,104 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore ${{ env.SOLUTION_FILE }}
 
-      - name: Build
+      - name: Build solution
         run: dotnet build ${{ env.SOLUTION_FILE }} --no-restore --configuration Release
 
-      - name: Test
-        run: dotnet test ${{ env.SOLUTION_FILE }} --no-build --configuration Release --logger "trx;LogFileName=test-results.trx" --results-directory ./test-results
+  test:
+    name: Test
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-quality: ${{ env.DOTNET_QUALITY }}
+
+      - name: Restore and build
+        run: dotnet build ${{ env.SOLUTION_FILE }} --configuration Release
+
+      - name: Run tests
+        run: >
+          dotnet test ${{ env.TEST_PROJECT }}
+          --no-build
+          --configuration Release
+          --logger "trx;LogFileName=test-results.trx"
+          --results-directory ./TestResults
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-results
-          path: ./test-results/*.trx
+          path: ./TestResults/*.trx
           retention-days: 14
 
-  build-images:
-    name: Build & Push Container Images
-    runs-on: ubuntu-latest
-    needs: build-and-test
+  build-and-push-images:
+    name: Build & Push Container Images (${{ matrix.app }})
+    needs: [build, test]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     strategy:
       matrix:
         include:
           - app: todolist-api
-            context: .
             dockerfile: src/TodoApi/Dockerfile
           - app: todolist-web
-            context: .
             dockerfile: src/TodoWeb/Dockerfile
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Log in to Azure Container Registry
-        uses: docker/login-action@v3
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
         with:
-          registry: ${{ secrets.ACR_LOGIN_SERVER }}
-          username: ${{ secrets.ACR_USERNAME }}
-          password: ${{ secrets.ACR_PASSWORD }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to ACR
+        run: az acr login --name ${{ vars.ACR_NAME }}
 
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
-          context: ${{ matrix.context }}
+          context: .
           file: ${{ matrix.dockerfile }}
           push: true
           tags: |
-            ${{ secrets.ACR_LOGIN_SERVER }}/${{ matrix.app }}:${{ github.sha }}
-            ${{ secrets.ACR_LOGIN_SERVER }}/${{ matrix.app }}:latest
+            ${{ vars.ACR_NAME }}.azurecr.io/${{ matrix.app }}:${{ github.sha }}
+            ${{ vars.ACR_NAME }}.azurecr.io/${{ matrix.app }}:latest
 
   deploy:
     name: Deploy to Azure Container Apps
+    needs: build-and-push-images
     runs-on: ubuntu-latest
-    needs: build-images
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      id-token: write
+      contents: read
     environment: production
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Azure Login
+      - name: Azure Login (OIDC)
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Deploy infrastructure and apps
-        run: |
-          az deployment group create \
-            --resource-group rg-todolist \
-            --template-file infra/main.bicep \
-            --parameters infra/main.bicepparam \
-            --parameters \
-              apiImage='${{ secrets.ACR_LOGIN_SERVER }}/todolist-api:${{ github.sha }}' \
-              webImage='${{ secrets.ACR_LOGIN_SERVER }}/todolist-web:${{ github.sha }}'
+        uses: azure/arm-deploy@v2
+        with:
+          resourceGroupName: ${{ vars.AZURE_RESOURCE_GROUP }}
+          template: ./infra/main.bicep
+          parameters: >
+            appName=todolist
+            apiImage=${{ vars.ACR_NAME }}.azurecr.io/todolist-api:${{ github.sha }}
+            webImage=${{ vars.ACR_NAME }}.azurecr.io/todolist-web:${{ github.sha }}
+          failOnStdErr: false
