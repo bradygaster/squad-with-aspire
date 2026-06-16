@@ -11,17 +11,23 @@ import type { Squad, SquadMessage } from './types'
 const SQUAD_COLORS: Record<string, string> = {
   user: '#7aa2ff',
   coordinator: '#9b87f5',
-  'research-and-ideation-squad': '#f4a261',
-  'site-design-squad': '#5ad1e6',
-  'game-development-squad': '#7bd88f',
-  'qa-squad': '#ff7aa2',
+  'ideation-research-planning-squad': '#f4a261',
+  'experience-design-squad': '#5ad1e6',
+  'application-development-squad': '#7bd88f',
+  'azure-infrastructure-squad': '#ff7aa2',
+  'quality-testing-squad': '#e6c75a',
+  'security-hardening-squad': '#d97af5',
+  'review-deployment-squad': '#7af5b8',
 }
 
 const KNOWN_SQUADS = [
-  'research-and-ideation-squad',
-  'site-design-squad',
-  'game-development-squad',
-  'qa-squad',
+  'ideation-research-planning-squad',
+  'experience-design-squad',
+  'application-development-squad',
+  'azure-infrastructure-squad',
+  'quality-testing-squad',
+  'security-hardening-squad',
+  'review-deployment-squad',
 ] as const
 
 type KnownSquad = (typeof KNOWN_SQUADS)[number]
