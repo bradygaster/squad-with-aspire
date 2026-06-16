@@ -23,6 +23,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Run tests before deploy
+        run: dotnet test --configuration Release --verbosity normal
+
       - name: Azure Login (OIDC)
         uses: azure/login@v2
         with:
