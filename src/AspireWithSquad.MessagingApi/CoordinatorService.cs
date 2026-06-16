@@ -20,6 +20,7 @@ public sealed class CoordinatorService : BackgroundService
     private readonly ISquadMessageBus _bus;
     private readonly ISquadConfigStore _config;
     private readonly IServiceProvider _services;
+    private readonly SquadRegistry _registry;
     private readonly ILogger<CoordinatorService> _logger;
 
     // Persistent sessions — one per squad. RunAsync handles session persistence internally
@@ -29,24 +30,16 @@ public sealed class CoordinatorService : BackgroundService
     // Track which messages each squad has already responded to (one reply per message received)
     private readonly ConcurrentDictionary<string, HashSet<string>> _respondedMessages = new();
 
-    internal static readonly string[] AllSquads =
-    [
-        "ideation-research-planning-squad",
-        "experience-design-squad",
-        "application-development-squad",
-        "azure-infrastructure-squad",
-        "quality-testing-squad",
-        "security-hardening-squad",
-        "review-deployment-squad",
-    ];
+    private string[] AllSquads => _registry.Names;
 
-    public CoordinatorService(ISquadMessageBus bus, ISquadConfigStore config, IServiceProvider services, ILogger<CoordinatorService> logger)
+    public CoordinatorService(ISquadMessageBus bus, ISquadConfigStore config, IServiceProvider services, SquadRegistry registry, ILogger<CoordinatorService> logger)
     {
         _bus = bus;
         _config = config;
         _services = services;
-        _logger = logger;
-    }
+            _registry = registry;
+            _logger = logger;
+        }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -92,7 +85,7 @@ public sealed class CoordinatorService : BackgroundService
             _logger.LogInformation("Coordinator routing message from user: {Subject}", message.Subject);
 
             // Check if this is an @mention targeting a specific squad
-            var targetSquad = DetectMentionedSquad(message.Body);
+            var targetSquad = _registry.DetectMentionedSquad(message.Body);
 
             if (targetSquad is not null)
             {
@@ -163,7 +156,7 @@ public sealed class CoordinatorService : BackgroundService
                 continue;
 
             // Drop non-actionable messages — prevents infinite ack loops
-            if (IsNonActionable(message.Body))
+            if (SquadRegistry.IsNonActionable(message.Body))
             {
                 _logger.LogDebug("Dropping non-actionable message from {From} to {To}", message.From, squadName);
                 continue;
@@ -315,46 +308,5 @@ public sealed class CoordinatorService : BackgroundService
 
             Available squads: {string.Join(", ", AllSquads)}
             """;
-    }
-
-    /// <summary>
-    /// Detects if the message body contains @squad-name and returns that squad,
-    /// so the coordinator can route to just that squad instead of broadcasting.
-    /// </summary>
-    internal static string? DetectMentionedSquad(string body)
-    {
-        foreach (var squad in AllSquads)
-        {
-            if (body.Contains($"@{squad}", StringComparison.OrdinalIgnoreCase))
-                return squad;
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// Detects messages that are just acknowledgments/status updates and don't need a response.
-    /// Prevents infinite "acknowledged — nothing actionable" ping-pong loops.
-    /// </summary>
-    internal static bool IsNonActionable(string body)
-    {
-        var lower = body.ToLowerInvariant();
-        string[] markers =
-        [
-            "nothing actionable",
-            "no action needed",
-            "nothing to act on",
-            "nothing to do here",
-            "acknowledged",
-            "just a status",
-            "just a mutual",
-            "no messages to send",
-            "already took my turn",
-            "story has moved past",
-            "moved past both of us",
-            "my turn is done",
-            "turn is long done"
-        ];
-        return markers.Any(m => lower.Contains(m));
     }
 }

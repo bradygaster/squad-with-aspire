@@ -30,6 +30,8 @@ var squadNames = new[]
     "review-deployment-squad",
 };
 
+builder.Services.AddSingleton(new SquadRegistry(squadNames));
+
 foreach (var squadName in squadNames)
 {
     var capturedName = squadName; // capture for closure
@@ -90,6 +92,6 @@ app.MapSquadMessagingApi();
 app.MapSquadConfigApi();
 
 // Expose the registered squad list so the UI doesn't hardcode names
-app.MapGet("/api/squads", () => squadNames);
+app.MapGet("/api/squads", (SquadRegistry registry) => registry.Names);
 
 app.Run();
