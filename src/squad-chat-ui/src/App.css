@@ -376,12 +376,10 @@ button {
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 0.95rem;
   resize: none;
-  overflow-y: auto;
+  overflow: hidden;
   color: #f5f7ff;
   background: rgba(255, 255, 255, 0.05);
   outline: none;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
   transition:
     border-color 160ms ease,
     box-shadow 160ms ease;

@@ -165,6 +165,10 @@ export function ComposeBar({
             const nextValue = event.target.value
             setDraft(nextValue)
             updateAutocomplete(nextValue, event.target.selectionStart ?? nextValue.length)
+            // Auto-grow textarea
+            const el = event.target
+            el.style.height = 'auto'
+            el.style.height = `${Math.min(el.scrollHeight, 160)}px`
           }}
           onClick={(event) => {
             updateAutocomplete(
