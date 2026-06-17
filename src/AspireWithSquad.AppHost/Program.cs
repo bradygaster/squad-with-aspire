@@ -3,20 +3,6 @@ using Aspire.Hosting;
 var builder = DistributedApplication.CreateBuilder(args);
 var repoRoot = Path.GetFullPath(Path.Combine(builder.AppHostDirectory, "..", ".."));
 
-// --- TodoList Infrastructure Resources ---
-
-var insights = builder.AddAzureApplicationInsights("app-insights");
-
-var cosmos = builder.AddAzureCosmosDB("cosmos")
-    .RunAsEmulator()
-    .AddDatabase("tododb");
-
-var todoApi = builder.AddProject<Projects.TodoList_Api>("todolist-api")
-    .WithReference(cosmos)
-    .WithReference(insights)
-    .WaitFor(cosmos)
-    .WithExternalHttpEndpoints();
-
 // --- Squad Orchestration ---
 
 // Each squad is its own siloed resource in the Aspire topology.
