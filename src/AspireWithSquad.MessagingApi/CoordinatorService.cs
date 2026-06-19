@@ -114,31 +114,14 @@ public sealed class CoordinatorService : BackgroundService
             }
             else
             {
-                activity?.SetTag("messaging.routing", "broadcast");
+                activity?.SetTag("messaging.routing", "phased-broadcast");
                 activity?.SetTag("messaging.target", "all-squads");
 
-                // Broadcast to all squads
+                // Phased dispatch — squads execute in pipeline order
                 await _bus.ReplyAsync(message.Id, "coordinator",
-                    $"📨 Got your message! Dispatching to all squads...", ct);
+                    $"📨 Got your message! Starting phased dispatch (plan → design → build → verify → ship)...", ct);
 
-                foreach (var squad in AllSquads)
-                {
-                    var fanout = new SquadMessage
-                    {
-                        Id = Guid.NewGuid().ToString("N"),
-                        From = "coordinator",
-                        To = squad,
-                        Subject = message.Subject,
-                        Body = message.Body,
-                        CorrelationId = message.CorrelationId ?? message.Id,
-                    };
-
-                    await _bus.SendAsync(fanout, ct);
-                    activity?.AddEvent(new ActivityEvent($"coordinator → {squad}"));
-                    _ = DispatchToAgent(squad, message, ct);
-                }
-
-                _logger.LogInformation("Coordinator dispatched message to {Count} squads", AllSquads.Length);
+                await DispatchInPhases(message, activity, ct);
             }
         }
     }
@@ -187,6 +170,56 @@ public sealed class CoordinatorService : BackgroundService
             // Dispatch to the target squad's agent
             _ = DispatchToAgent(squadName, message, ct);
         }
+    }
+
+    /// <summary>
+    /// Dispatches a user message through squads in phased order.
+    /// Phase 0 (plan) runs first and must complete before phase 1 (design), etc.
+    /// Squads within the same phase run in parallel.
+    /// </summary>
+    private async Task DispatchInPhases(SquadMessage message, Activity? parentActivity, CancellationToken ct)
+    {
+        foreach (var phase in SquadRegistry.Phases)
+        {
+            var squadsInPhase = phase.Squads.Where(s => AllSquads.Contains(s)).ToArray();
+            if (squadsInPhase.Length == 0)
+                continue;
+
+            parentActivity?.AddEvent(new ActivityEvent($"Phase {phase.Order} ({phase.Name}): {string.Join(", ", squadsInPhase)}"));
+            _logger.LogInformation("Starting phase {Phase} ({Name}): {Squads}",
+                phase.Order, phase.Name, string.Join(", ", squadsInPhase));
+
+            await _bus.ReplyAsync(message.Id, "coordinator",
+                $"⏳ Phase {phase.Order} ({phase.Name}): dispatching to {string.Join(", ", squadsInPhase)}...", ct);
+
+            // Fan out within the phase and send messages
+            var phaseTasks = new List<Task>();
+            foreach (var squad in squadsInPhase)
+            {
+                var fanout = new SquadMessage
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    From = "coordinator",
+                    To = squad,
+                    Subject = message.Subject,
+                    Body = message.Body,
+                    CorrelationId = message.CorrelationId ?? message.Id,
+                };
+
+                await _bus.SendAsync(fanout, ct);
+                parentActivity?.AddEvent(new ActivityEvent($"coordinator → {squad}"));
+                phaseTasks.Add(DispatchToAgent(squad, message, ct));
+            }
+
+            // Wait for all squads in this phase to finish before moving to the next
+            await Task.WhenAll(phaseTasks);
+
+            _logger.LogInformation("Phase {Phase} ({Name}) complete", phase.Order, phase.Name);
+            await _bus.ReplyAsync(message.Id, "coordinator",
+                $"✅ Phase {phase.Order} ({phase.Name}) complete.", ct);
+        }
+
+        _logger.LogInformation("All phases complete for message {MessageId}", message.Id);
     }
 
     private async Task DispatchToAgent(string squadName, SquadMessage message, CancellationToken ct)
@@ -323,6 +356,22 @@ public sealed class CoordinatorService : BackgroundService
 
             """;
 
+        var roleDescription = SquadRegistry.GetRoleDescription(squadName);
+        var roleBlock = roleDescription is not null
+            ? $"""
+            YOUR ROLE: {roleDescription}
+
+            """
+            : "";
+
+        var phaseInstruction = SquadRegistry.GetPhaseInstruction(squadName);
+        var phaseBlock = phaseInstruction is not null
+            ? $"""
+            CURRENT PHASE INSTRUCTION: {phaseInstruction}
+
+            """
+            : "";
+
         var contextBlock = history.Count > 0
             ? $"""
             Recent chat history:
@@ -335,12 +384,13 @@ public sealed class CoordinatorService : BackgroundService
             : message.Body;
 
         return $"""
-            {repoInstruction}{knowledgeBlock}Respond as {squadName}.
+            {repoInstruction}{knowledgeBlock}{roleBlock}{phaseBlock}Respond as {squadName}.
 
             {contextBlock}
 
             RULES:
             - You get ONE reply to this message. Make it count — be thoughtful and complete.
+            - PRODUCE ARTIFACTS, not commentary. File issues, write code, create PRs, write tests. Don't just describe what should be done — do it.
             - If a message requires NO action from you (status updates, acknowledgments, "nothing to do"), DO NOT REPLY. Silence is correct.
             - To send a message to another squad, CALL the squad_send_message tool. Writing "@squad" in text does nothing.
             - Do NOT send acknowledgment messages like "got it", "nothing actionable", "my turn is done". Just stay silent.
