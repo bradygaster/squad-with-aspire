@@ -2,5 +2,17 @@ node_modules/
 **/bin/
 **/obj/
 *.db
+*.db-shm
+*.db-wal
 .vite/
 dist/
+
+# Squad session state (ephemeral, never commit)
+squads/**/session-state/
+squads/**/.squad/session-store.db*
+
+# IDE
+.vs/
+.idea/
+*.suo
+*.user
