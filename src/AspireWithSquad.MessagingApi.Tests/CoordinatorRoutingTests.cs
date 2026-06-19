@@ -281,3 +281,43 @@ public class KnowledgeExtractionTests
         Assert.DoesNotContain("<knowledge>", visible);
     }
 }
+
+public class TurnBudgetTests
+{
+    [Fact]
+    public void MaxTurnsPerSquad_IsReasonableDefault()
+    {
+        Assert.InRange(CoordinatorService.MaxTurnsPerSquad, 3, 10);
+    }
+
+    [Fact]
+    public void MaxTurnsPerSquad_IsFive()
+    {
+        Assert.Equal(5, CoordinatorService.MaxTurnsPerSquad);
+    }
+
+    [Theory]
+    [InlineData(0, "FINAL TURN")]
+    [InlineData(1, "1 turn remaining")]
+    [InlineData(3, "4 turns remaining")]
+    public void BudgetPrompt_ContainsUrgencyAtLowBudget(int turnsRemaining, string expectedFragment)
+    {
+        var budgetBlock = turnsRemaining switch
+        {
+            0 => "⚠️ FINAL TURN: This is your LAST action. You MUST produce a concrete deliverable NOW — file an issue, submit a PR, write a spec, or create a test. No planning, no \"next steps\". Ship something.",
+            1 => "⏰ BUDGET: 1 turn remaining after this one. Wrap up — produce your final artifact on the next turn.",
+            _ => $"BUDGET: You have {turnsRemaining + 1} turns remaining (of {CoordinatorService.MaxTurnsPerSquad} total). Each turn must produce forward progress. Don't deliberate — act."
+        };
+
+        Assert.Contains(expectedFragment, budgetBlock);
+    }
+
+    [Fact]
+    public void BudgetPrompt_FinalTurn_DemandsConcrete()
+    {
+        var budgetBlock = "⚠️ FINAL TURN: This is your LAST action. You MUST produce a concrete deliverable NOW — file an issue, submit a PR, write a spec, or create a test. No planning, no \"next steps\". Ship something.";
+        Assert.Contains("MUST", budgetBlock);
+        Assert.Contains("file an issue", budgetBlock);
+        Assert.Contains("Ship something", budgetBlock);
+    }
+}

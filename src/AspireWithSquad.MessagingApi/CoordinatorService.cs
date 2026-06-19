@@ -31,6 +31,15 @@ public sealed class CoordinatorService : BackgroundService
     // Track which messages each squad has already responded to (one reply per message received)
     private readonly ConcurrentDictionary<string, HashSet<string>> _respondedMessages = new();
 
+    // Turn budget: tracks how many turns each squad has used per dispatch cycle (keyed by correlationId:squadName)
+    private readonly ConcurrentDictionary<string, int> _turnUsage = new();
+
+    // Collected outputs per dispatch cycle for issue synthesis (keyed by correlationId)
+    private readonly ConcurrentDictionary<string, ConcurrentBag<(string squad, string output)>> _cycleOutputs = new();
+
+    /// <summary>Max turns any squad gets per dispatch cycle before being cut off.</summary>
+    internal const int MaxTurnsPerSquad = 5;
+
     private string[] AllSquads => _registry.Names;
 
     public CoordinatorService(ISquadMessageBus bus, ISquadConfigStore config, IServiceProvider services, SquadRegistry registry, ILogger<CoordinatorService> logger)
@@ -232,10 +241,162 @@ public sealed class CoordinatorService : BackgroundService
         }
 
         _logger.LogInformation("All phases complete for message {MessageId}", message.Id);
+
+        // Issue synthesis epilogue: collect all outputs and file summary issues
+        var correlationId = message.CorrelationId ?? message.Id;
+        await SynthesizeIssues(correlationId, message, ct);
+
+        // Clean up turn tracking for this cycle
+        foreach (var squad in AllSquads)
+            _turnUsage.TryRemove($"{correlationId}:{squad}", out _);
+        _cycleOutputs.TryRemove(correlationId, out _);
+    }
+
+    /// <summary>
+    /// After all phases complete, synthesizes squad outputs into actionable GitHub issues.
+    /// The coordinator acts as project manager — it distills the discussion into work items.
+    /// </summary>
+    private async Task SynthesizeIssues(string correlationId, SquadMessage originalMessage, CancellationToken ct)
+    {
+        if (!_cycleOutputs.TryGetValue(correlationId, out var outputs) || outputs.IsEmpty)
+            return;
+
+        var targetRepo = await _config.GetAsync("target-repo", ct);
+        if (string.IsNullOrWhiteSpace(targetRepo))
+        {
+            _logger.LogInformation("No target-repo configured — skipping issue synthesis");
+            await _bus.ReplyAsync(originalMessage.Id, "coordinator",
+                "📋 Cycle complete. Set a target repo (`target-repo` config) to enable automatic issue filing.", ct);
+            return;
+        }
+
+        // Group outputs by squad and build a synthesis prompt
+        var outputSummary = string.Join("\n\n", outputs.Select(o =>
+            $"### {o.squad}\n{o.output[..Math.Min(2000, o.output.Length)]}"));
+
+        var synthesisPrompt = $"""
+            You are the project coordinator. The following squads just completed a work cycle for this user request:
+
+            USER REQUEST: {originalMessage.Body}
+
+            SQUAD OUTPUTS:
+            {outputSummary}
+
+            YOUR TASK: Create 1-5 focused GitHub issues that capture the ACTIONABLE work items from this cycle.
+            Each issue should be specific enough for a developer to pick up and implement.
+
+            For each issue, use this exact format (one per issue):
+            <issue>
+            title: [concise title]
+            labels: [comma-separated labels like "enhancement", "bug", "design", "security", "testing"]
+            body: [2-4 sentence description with acceptance criteria]
+            </issue>
+
+            Rules:
+            - Only create issues for CONCRETE work items, not vague "consider doing X" suggestions
+            - Assign labels from: enhancement, bug, design, security, testing, infrastructure, documentation
+            - If squads already filed issues during their turns, don't duplicate them
+            - Prefer fewer, well-scoped issues over many vague ones
+            """;
+
+        try
+        {
+            var agent = _services.GetKeyedService<SquadAgent>("ideation");
+            if (agent is null)
+            {
+                _logger.LogWarning("No ideation agent available for issue synthesis");
+                return;
+            }
+
+            using var activity = ActivitySource.StartActivity("issue-synthesis", ActivityKind.Internal);
+            var response = await agent.RunAsync(synthesisPrompt, session: null, options: null, cancellationToken: ct);
+
+            if (string.IsNullOrWhiteSpace(response.Text))
+                return;
+
+            // Parse <issue> blocks and file them
+            var issueMatches = System.Text.RegularExpressions.Regex.Matches(
+                response.Text,
+                @"<issue>\s*title:\s*(.+?)\s*labels:\s*(.+?)\s*body:\s*(.+?)\s*</issue>",
+                System.Text.RegularExpressions.RegexOptions.Singleline);
+
+            var issueCount = 0;
+            foreach (System.Text.RegularExpressions.Match match in issueMatches)
+            {
+                var title = match.Groups[1].Value.Trim();
+                var labels = match.Groups[2].Value.Trim();
+                var body = match.Groups[3].Value.Trim();
+
+                // File via gh CLI
+                var labelArgs = string.Join(",", labels.Split(',').Select(l => l.Trim()));
+                var process = new System.Diagnostics.Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "gh",
+                        Arguments = $"issue create --repo {targetRepo} --title \"{title.Replace("\"", "\\\"")}\" --body \"{body.Replace("\"", "\\\"")}\" --label \"{labelArgs}\"",
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false,
+                    }
+                };
+
+                process.Start();
+                var ghOutput = await process.StandardOutput.ReadToEndAsync(ct);
+                await process.WaitForExitAsync(ct);
+
+                if (process.ExitCode == 0)
+                {
+                    issueCount++;
+                    _logger.LogInformation("Filed issue: {Title} → {Url}", title, ghOutput.Trim());
+                }
+                else
+                {
+                    var err = await process.StandardError.ReadToEndAsync(ct);
+                    _logger.LogWarning("Failed to file issue '{Title}': {Error}", title, err);
+                }
+            }
+
+            if (issueCount > 0)
+            {
+                await _bus.ReplyAsync(originalMessage.Id, "coordinator",
+                    $"📋 Cycle complete — filed {issueCount} issue(s) in {targetRepo}.", ct);
+            }
+            else
+            {
+                await _bus.ReplyAsync(originalMessage.Id, "coordinator",
+                    "📋 Cycle complete — squads produced outputs but no discrete issues were synthesized.", ct);
+            }
+
+            activity?.SetTag("issues.filed", issueCount);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Issue synthesis failed: {Error}", ex.Message);
+            await _bus.ReplyAsync(originalMessage.Id, "coordinator",
+                $"⚠️ Issue synthesis failed: {ex.Message}", ct);
+        }
     }
 
     private async Task DispatchToAgent(string squadName, SquadMessage message, CancellationToken ct)
     {
+        var correlationId = message.CorrelationId ?? message.Id;
+        var budgetKey = $"{correlationId}:{squadName}";
+
+        // Check turn budget — if exhausted, skip this squad
+        var turnsUsed = _turnUsage.GetOrAdd(budgetKey, 0);
+        if (turnsUsed >= MaxTurnsPerSquad)
+        {
+            _logger.LogInformation("Squad '{Squad}' hit turn budget ({Max} turns) for cycle {Correlation}",
+                squadName, MaxTurnsPerSquad, correlationId);
+            SquadTelemetry.MessagesDropped.Add(1, SquadTelemetry.AgentTags(squadName));
+            return;
+        }
+
+        // Increment turn count
+        _turnUsage.AddOrUpdate(budgetKey, 1, (_, current) => current + 1);
+        var turnsRemaining = MaxTurnsPerSquad - (turnsUsed + 1);
+
         var tags = SquadTelemetry.AgentTags(squadName);
         SquadTelemetry.AgentInvocations.Add(1, tags);
         SquadTelemetry.AgentActive.Add(1, tags);
@@ -258,7 +419,7 @@ public sealed class CoordinatorService : BackgroundService
             activity?.SetTag("messaging.to", squadName);
             activity?.SetTag("messaging.body.preview", message.Body[..Math.Min(80, message.Body.Length)]);
 
-            var contextualPrompt = await BuildContextualPrompt(squadName, message, ct);
+            var contextualPrompt = await BuildContextualPrompt(squadName, message, turnsRemaining, ct);
 
             _logger.LogInformation("Dispatching to SquadAgent '{Squad}' (ephemeral session)", squadName);
 
@@ -276,6 +437,10 @@ public sealed class CoordinatorService : BackgroundService
             {
                 SquadTelemetry.AgentResponseLength.Record(response.Text.Length, tags);
                 SquadTelemetry.MessagesSent.Add(1, tags);
+
+                // Collect output for issue synthesis at end of cycle
+                var outputs = _cycleOutputs.GetOrAdd(correlationId, _ => new());
+                outputs.Add((squadName, response.Text));
 
                 // Extract and persist any knowledge before sending the reply
                 var (visibleReply, knowledge) = ExtractKnowledge(response.Text);
@@ -356,7 +521,7 @@ public sealed class CoordinatorService : BackgroundService
         _logger.LogInformation("Knowledge appended for '{Squad}' ({Length} chars total)", squadName, updated.Length);
     }
 
-    private async Task<string> BuildContextualPrompt(string squadName, SquadMessage message, CancellationToken ct)
+    private async Task<string> BuildContextualPrompt(string squadName, SquadMessage message, int turnsRemaining, CancellationToken ct)
     {
         var targetRepo = await _config.GetAsync("target-repo", ct);
         var knowledge = await _config.GetAsync($"knowledge:{squadName}", ct);
@@ -411,8 +576,24 @@ public sealed class CoordinatorService : BackgroundService
             """
             : message.Body;
 
+        var budgetBlock = turnsRemaining switch
+        {
+            0 => """
+            ⚠️ FINAL TURN: This is your LAST action. You MUST produce a concrete deliverable NOW — file an issue, submit a PR, write a spec, or create a test. No planning, no "next steps". Ship something.
+
+            """,
+            1 => """
+            ⏰ BUDGET: 1 turn remaining after this one. Wrap up — produce your final artifact on the next turn.
+
+            """,
+            _ => $"""
+            BUDGET: You have {turnsRemaining + 1} turns remaining (of {MaxTurnsPerSquad} total). Each turn must produce forward progress. Don't deliberate — act.
+
+            """
+        };
+
         return $"""
-            {repoInstruction}{knowledgeBlock}{roleBlock}{phaseBlock}Respond as {squadName}.
+            {repoInstruction}{knowledgeBlock}{roleBlock}{phaseBlock}{budgetBlock}Respond as {squadName}.
 
             {contextBlock}
 
