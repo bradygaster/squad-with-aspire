@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 using Microsoft.Agents.AI;
@@ -15,7 +16,7 @@ namespace AspireWithSquad.MessagingApi;
 /// </summary>
 public sealed class CoordinatorService : BackgroundService
 {
-    private static readonly ActivitySource ActivitySource = new("Squad.Coordinator", "1.0.0");
+    private static readonly ActivitySource ActivitySource = SquadTelemetry.ActivitySource;
 
     private readonly ISquadMessageBus _bus;
     private readonly ISquadConfigStore _config;
@@ -73,6 +74,8 @@ public sealed class CoordinatorService : BackgroundService
         {
             if (message.From != "user")
                 continue;
+
+            SquadTelemetry.MessagesReceived.Add(1, new TagList { { "source", "user" } });
 
             using var activity = ActivitySource.StartActivity(
                 $"user → coordinator",
@@ -141,9 +144,12 @@ public sealed class CoordinatorService : BackgroundService
             // Drop non-actionable messages — prevents infinite ack loops
             if (SquadRegistry.IsNonActionable(message.Body))
             {
+                SquadTelemetry.MessagesDropped.Add(1, SquadTelemetry.AgentTags(squadName));
                 _logger.LogDebug("Dropping non-actionable message from {From} to {To}", message.From, squadName);
                 continue;
             }
+
+            SquadTelemetry.MessagesReceived.Add(1, new TagList { { "source", "inter-squad" } });
 
             // One reply per message received — prevents infinite side-conversation loops
             var responded = _respondedMessages.GetOrAdd(squadName, _ => new HashSet<string>());
@@ -192,6 +198,8 @@ public sealed class CoordinatorService : BackgroundService
             await _bus.ReplyAsync(message.Id, "coordinator",
                 $"⏳ Phase {phase.Order} ({phase.Name}): dispatching to {string.Join(", ", squadsInPhase)}...", ct);
 
+            var phaseStart = Stopwatch.GetTimestamp();
+
             // Fan out within the phase and send messages
             var phaseTasks = new List<Task>();
             foreach (var squad in squadsInPhase)
@@ -214,7 +222,11 @@ public sealed class CoordinatorService : BackgroundService
             // Wait for all squads in this phase to finish before moving to the next
             await Task.WhenAll(phaseTasks);
 
-            _logger.LogInformation("Phase {Phase} ({Name}) complete", phase.Order, phase.Name);
+            var phaseElapsed = Stopwatch.GetElapsedTime(phaseStart).TotalMilliseconds;
+            SquadTelemetry.PhaseDuration.Record(phaseElapsed, SquadTelemetry.PhaseTags(phase.Order, phase.Name));
+            SquadTelemetry.PhasesCompleted.Add(1, SquadTelemetry.PhaseTags(phase.Order, phase.Name));
+
+            _logger.LogInformation("Phase {Phase} ({Name}) complete in {Elapsed:F0}ms", phase.Order, phase.Name, phaseElapsed);
             await _bus.ReplyAsync(message.Id, "coordinator",
                 $"✅ Phase {phase.Order} ({phase.Name}) complete.", ct);
         }
@@ -224,6 +236,11 @@ public sealed class CoordinatorService : BackgroundService
 
     private async Task DispatchToAgent(string squadName, SquadMessage message, CancellationToken ct)
     {
+        var tags = SquadTelemetry.AgentTags(squadName);
+        SquadTelemetry.AgentInvocations.Add(1, tags);
+        SquadTelemetry.AgentActive.Add(1, tags);
+        var agentStart = Stopwatch.GetTimestamp();
+
         try
         {
             var agent = _services.GetKeyedService<SquadAgent>(squadName);
@@ -251,16 +268,22 @@ public sealed class CoordinatorService : BackgroundService
 
             var response = await agent.RunAsync(contextualPrompt, session: null, options: null, cancellationToken: ct);
 
+            var elapsed = Stopwatch.GetElapsedTime(agentStart).TotalMilliseconds;
+            SquadTelemetry.AgentDuration.Record(elapsed, tags);
             mcpActivity?.SetTag("response.length", response.Text?.Length ?? 0);
 
             if (!string.IsNullOrWhiteSpace(response.Text))
             {
+                SquadTelemetry.AgentResponseLength.Record(response.Text.Length, tags);
+                SquadTelemetry.MessagesSent.Add(1, tags);
+
                 // Extract and persist any knowledge before sending the reply
                 var (visibleReply, knowledge) = ExtractKnowledge(response.Text);
 
                 if (!string.IsNullOrWhiteSpace(knowledge))
                 {
                     await AppendKnowledge(squadName, knowledge, ct);
+                    SquadTelemetry.KnowledgeExtractions.Add(1, tags);
                     activity?.AddEvent(new ActivityEvent($"{squadName} learned"));
                 }
 
@@ -275,9 +298,14 @@ public sealed class CoordinatorService : BackgroundService
         }
         catch (Exception ex)
         {
+            SquadTelemetry.AgentErrors.Add(1, tags);
             _logger.LogError(ex, "SquadAgent dispatch failed for '{Squad}': {Error}", squadName, ex.Message);
             await _bus.ReplyAsync(message.Id, squadName,
                 $"⚠️ {squadName} error: {ex.Message}", ct);
+        }
+        finally
+        {
+            SquadTelemetry.AgentActive.Add(-1, tags);
         }
     }
 

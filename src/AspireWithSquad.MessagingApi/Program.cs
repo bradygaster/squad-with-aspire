@@ -67,13 +67,16 @@ foreach (var squadName in squadNames)
 // Squad coordinator routes user messages to all squads and dispatches to SquadAgents
 builder.Services.AddHostedService<CoordinatorService>();
 
-// OpenTelemetry: export traces to the Aspire dashboard via OTLP
+// OpenTelemetry: export traces and metrics to the Aspire dashboard via OTLP
 var otel = builder.Services.AddOpenTelemetry()
     .WithTracing(tracing => tracing
         .AddSource(SquadMessagingServiceExtensions.ActivitySourceName)
         .AddSource(SquadMessagingServiceExtensions.ConfigActivitySourceName)
         .AddSource("Squad.Coordinator")
-        .AddSource(SquadAgentDiagnostics.ActivitySourceName));
+        .AddSource(SquadTelemetry.ServiceName)
+        .AddSource(SquadAgentDiagnostics.ActivitySourceName))
+    .WithMetrics(metrics => metrics
+        .AddMeter(SquadTelemetry.MeterName));
 otel.UseOtlpExporter();
 
 // CORS for the chat UI
