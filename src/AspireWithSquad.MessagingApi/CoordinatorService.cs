@@ -84,56 +84,67 @@ public sealed class CoordinatorService : BackgroundService
             if (message.From != "user")
                 continue;
 
-            SquadTelemetry.MessagesReceived.Add(1, new TagList { { "source", "user" } });
-
-            using var activity = ActivitySource.StartActivity(
-                $"user → coordinator",
-                ActivityKind.Server);
-            activity?.SetTag("messaging.from", message.From);
-            activity?.SetTag("messaging.to", "coordinator");
-            activity?.SetTag("messaging.message.id", message.Id);
-            activity?.SetTag("messaging.body.preview", message.Body[..Math.Min(80, message.Body.Length)]);
-
-            _logger.LogInformation("Coordinator routing message from user: {Subject}", message.Subject);
-
-            // Check if this is an @mention targeting a specific squad
-            var targetSquad = _registry.DetectMentionedSquad(message.Body);
-
-            if (targetSquad is not null)
+            try
             {
-                activity?.SetTag("messaging.routing", "direct");
-                activity?.SetTag("messaging.target", targetSquad);
+                SquadTelemetry.MessagesReceived.Add(1, new TagList { { "source", "user" } });
 
-                // DM to a specific squad
-                await _bus.ReplyAsync(message.Id, "coordinator",
-                    $"📨 Got your message! Routing to {targetSquad}...", ct);
+                using var activity = ActivitySource.StartActivity(
+                    $"user → coordinator",
+                    ActivityKind.Server);
+                activity?.SetTag("messaging.from", message.From);
+                activity?.SetTag("messaging.to", "coordinator");
+                activity?.SetTag("messaging.message.id", message.Id);
+                activity?.SetTag("messaging.body.preview", Truncate(message.Body, 80));
 
-                var fanout = new SquadMessage
+                _logger.LogInformation("Coordinator routing message from user: {Subject}", message.Subject);
+
+                // Check if this is an @mention targeting a specific squad
+                var targetSquad = _registry.DetectMentionedSquad(message.Body);
+
+                if (targetSquad is not null)
                 {
-                    Id = Guid.NewGuid().ToString("N"),
-                    From = "coordinator",
-                    To = targetSquad,
-                    Subject = message.Subject,
-                    Body = message.Body,
-                    CorrelationId = message.CorrelationId ?? message.Id,
-                };
+                    activity?.SetTag("messaging.routing", "direct");
+                    activity?.SetTag("messaging.target", targetSquad);
 
-                await _bus.SendAsync(fanout, ct);
-                activity?.AddEvent(new ActivityEvent($"coordinator → {targetSquad}"));
-                _ = DispatchToAgent(targetSquad, message, ct);
+                    // DM to a specific squad
+                    await _bus.ReplyAsync(message.Id, "coordinator",
+                        $"📨 Got your message! Routing to {targetSquad}...", ct);
 
-                _logger.LogInformation("Coordinator routed @mention to {Squad}", targetSquad);
+                    var fanout = new SquadMessage
+                    {
+                        Id = Guid.NewGuid().ToString("N"),
+                        From = "coordinator",
+                        To = targetSquad,
+                        Subject = message.Subject,
+                        Body = message.Body,
+                        CorrelationId = message.CorrelationId ?? message.Id,
+                    };
+
+                    await _bus.SendAsync(fanout, ct);
+                    activity?.AddEvent(new ActivityEvent($"coordinator → {targetSquad}"));
+                    // Await instead of fire-and-forget to observe exceptions
+                    await DispatchToAgent(targetSquad, message, ct);
+
+                    _logger.LogInformation("Coordinator routed @mention to {Squad}", targetSquad);
+                }
+                else
+                {
+                    activity?.SetTag("messaging.routing", "phased-broadcast");
+                    activity?.SetTag("messaging.target", "all-squads");
+
+                    // Phased dispatch — squads execute in pipeline order
+                    await _bus.ReplyAsync(message.Id, "coordinator",
+                        $"📨 Got your message! Starting phased dispatch (plan → design → build → verify → ship)...", ct);
+
+                    await DispatchInPhases(message, activity, ct);
+                }
             }
-            else
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex)
             {
-                activity?.SetTag("messaging.routing", "phased-broadcast");
-                activity?.SetTag("messaging.target", "all-squads");
-
-                // Phased dispatch — squads execute in pipeline order
-                await _bus.ReplyAsync(message.Id, "coordinator",
-                    $"📨 Got your message! Starting phased dispatch (plan → design → build → verify → ship)...", ct);
-
-                await DispatchInPhases(message, activity, ct);
+                _logger.LogError(ex, "Coordinator failed processing user message {MessageId}: {Error}", message.Id, ex.Message);
+                try { await _bus.ReplyAsync(message.Id, "coordinator", $"⚠️ Coordinator error: {ex.Message}", ct); }
+                catch { /* best effort */ }
             }
         }
     }
@@ -158,32 +169,38 @@ public sealed class CoordinatorService : BackgroundService
                 continue;
             }
 
-            SquadTelemetry.MessagesReceived.Add(1, new TagList { { "source", "inter-squad" } });
-
-            // One reply per message received — prevents infinite side-conversation loops
-            var responded = _respondedMessages.GetOrAdd(squadName, _ => new HashSet<string>());
-            lock (responded)
+            try
             {
-                if (!responded.Add(message.Id))
+                SquadTelemetry.MessagesReceived.Add(1, new TagList { { "source", "inter-squad" } });
+
+                // One reply per message received — prevents infinite side-conversation loops
+                var responded = _respondedMessages.GetOrAdd(squadName, _ => new HashSet<string>());
+                lock (responded)
                 {
-                    // Already responded to this exact message
-                    continue;
+                    if (!responded.Add(message.Id))
+                        continue;
                 }
+
+                using var activity = ActivitySource.StartActivity(
+                    $"{message.From} → {squadName}",
+                    ActivityKind.Consumer);
+                activity?.SetTag("messaging.from", message.From);
+                activity?.SetTag("messaging.to", squadName);
+                activity?.SetTag("messaging.type", message.From == "user" ? "dm" : "inter-squad");
+                activity?.SetTag("messaging.body.preview", Truncate(message.Body, 80));
+
+                _logger.LogInformation("Direct message: {From} → {To}: {Preview}",
+                    message.From, squadName, Truncate(message.Body, 80));
+
+                // Dispatch to the target squad's agent
+                await DispatchToAgent(squadName, message, ct);
             }
-
-            using var activity = ActivitySource.StartActivity(
-                $"{message.From} → {squadName}",
-                ActivityKind.Consumer);
-            activity?.SetTag("messaging.from", message.From);
-            activity?.SetTag("messaging.to", squadName);
-            activity?.SetTag("messaging.type", message.From == "user" ? "dm" : "inter-squad");
-            activity?.SetTag("messaging.body.preview", message.Body[..Math.Min(80, message.Body.Length)]);
-
-            _logger.LogInformation("Direct message: {From} → {To}: {Preview}",
-                message.From, squadName, message.Body[..Math.Min(80, message.Body.Length)]);
-
-            // Dispatch to the target squad's agent
-            _ = DispatchToAgent(squadName, message, ct);
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Squad listener '{Squad}' failed on message {MessageId}: {Error}",
+                    squadName, message.Id, ex.Message);
+            }
         }
     }
 
@@ -417,7 +434,7 @@ public sealed class CoordinatorService : BackgroundService
             activity?.SetTag("squad.name", squadName);
             activity?.SetTag("messaging.from", message.From);
             activity?.SetTag("messaging.to", squadName);
-            activity?.SetTag("messaging.body.preview", message.Body[..Math.Min(80, message.Body.Length)]);
+            activity?.SetTag("messaging.body.preview", Truncate(message.Body, 80));
 
             var contextualPrompt = await BuildContextualPrompt(squadName, message, turnsRemaining, ct);
 
@@ -611,4 +628,8 @@ public sealed class CoordinatorService : BackgroundService
             Available squads: {string.Join(", ", AllSquads)}
             """;
     }
+
+    /// <summary>Null-safe string truncation to avoid NRE on message bodies.</summary>
+    private static string Truncate(string? text, int maxLength) =>
+        string.IsNullOrEmpty(text) ? "" : text[..Math.Min(maxLength, text.Length)];
 }
