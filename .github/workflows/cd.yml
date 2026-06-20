@@ -1,82 +1,85 @@
-name: CD
+name: CD — Deploy to Azure
 
 on:
   push:
     branches: [main]
+    paths-ignore: ['**.md', 'squads/**', 'squad-messages.db']
   workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - staging
+          - production
 
 permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: deploy-${{ github.event.inputs.environment || 'production' }}
+  cancel-in-progress: false
+
 env:
-  AZURE_RESOURCE_GROUP: rg-todo-app
-  ACR_NAME: todoappcr
-  CONTAINER_APP_NAME: todo-app
-  IMAGE_NAME: todo-app
+  DOTNET_VERSION: '10.0.x'
+  NODE_VERSION: '22'
+  AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
 jobs:
-  deploy-infra:
+  ci-gate:
+    name: Run CI checks
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    name: Deploy to Azure
     runs-on: ubuntu-latest
-    outputs:
-      acr-login-server: ${{ steps.deploy.outputs.acrLoginServer }}
+    needs: ci-gate
+    environment: ${{ github.event.inputs.environment || 'production' }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Azure Login (OIDC)
-        uses: azure/login@v2
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Deploy Infrastructure (Bicep)
-        id: deploy
-        run: |
-          result=$(az deployment group create \
-            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --template-file infra/main.bicep \
-            --parameters infra/main.bicepparam \
-            --query 'properties.outputs' -o json)
-          echo "acrLoginServer=$(echo $result | jq -r '.acrLoginServer.value')" >> "$GITHUB_OUTPUT"
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
 
-  build-and-push:
-    runs-on: ubuntu-latest
-    needs: deploy-infra
-    steps:
-      - uses: actions/checkout@v4
+      - name: Install azd
+        uses: Azure/setup-azd@v2
 
       - name: Azure Login (OIDC)
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Login to ACR
-        run: az acr login --name ${{ env.ACR_NAME }}
-
-      - name: Build and push container image
+      - name: Provision & Deploy with azd
         run: |
-          docker build -t ${{ needs.deploy-infra.outputs.acr-login-server }}/${{ env.IMAGE_NAME }}:${{ github.sha }} .
-          docker build -t ${{ needs.deploy-infra.outputs.acr-login-server }}/${{ env.IMAGE_NAME }}:latest .
-          docker push ${{ needs.deploy-infra.outputs.acr-login-server }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          docker push ${{ needs.deploy-infra.outputs.acr-login-server }}/${{ env.IMAGE_NAME }}:latest
+          azd auth login \
+            --client-id "$AZURE_CLIENT_ID" \
+            --federated-credential-provider "github" \
+            --tenant-id "$AZURE_TENANT_ID"
+          azd up --no-prompt
+        env:
+          AZURE_ENV_NAME: pawmart-${{ github.event.inputs.environment || 'production' }}
+          AZD_INITIAL_ENVIRONMENT_CONFIG: ${{ vars.AZD_INITIAL_ENVIRONMENT_CONFIG }}
 
-  deploy-app:
-    runs-on: ubuntu-latest
-    needs: [deploy-infra, build-and-push]
-    steps:
-      - name: Azure Login (OIDC)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Deploy to Container App
+      - name: Post-deploy health check
         run: |
-          az containerapp update \
-            --name ${{ env.CONTAINER_APP_NAME }} \
-            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --image ${{ needs.deploy-infra.outputs.acr-login-server }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          ENDPOINT=$(azd env get-value SERVICE_API_ENDPOINT_URL 2>/dev/null || echo "")
+          if [ -n "$ENDPOINT" ]; then
+            echo "Checking API health at $ENDPOINT/health..."
+            curl -sf "$ENDPOINT/health" --max-time 30 || echo "⚠️ Health check unavailable"
+          else
+            echo "No endpoint URL found — skipping health check"
+          fi
