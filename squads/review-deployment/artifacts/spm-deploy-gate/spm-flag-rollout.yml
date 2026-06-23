@@ -1,0 +1,220 @@
+name: spm-flag-rollout
+
+# WI-SPM-8 — Saved Payment Methods v1 flag-gated rollout
+# Flag-gated (no infra canary). 4 stages: internal-tenant -> 1% -> 10% -> 100%.
+# Each stage = App Configuration feature flag percentage flip + 5 stacked gates.
+#
+# Apply order: WI-SPM-6 (infra) -> WI-SPM-1 (vault endpoints) -> WI-SPM-2 (checkout
+# integration) -> WI-SPM-7 (QA bundle) -> WI-SPM-4 (frontend) -> this workflow.
+#
+# Reuses existing composites: checkout-rollback, _preprod-security-gate, _runtime-gate.
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: 'Rollout stage'
+        required: true
+        type: choice
+        options:
+          - internal-tenant
+          - canary-1
+          - canary-10
+          - prod-100
+      image_sha:
+        description: 'Image SHA promoted on main (must match deployed checkout-api:sha-XXX)'
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+  checks: read
+  issues: write
+
+env:
+  AZURE_RG: travel-assistant-prod
+  APP_CONFIG_STORE: ${{ secrets.APP_CONFIG }}
+  FLAG_NAME: saved_payment_methods_v1_enabled
+  CONTAINER_APP: checkout-api
+
+jobs:
+  # =================== CONTRACT GATE — P0 ===================
+  contract-gate:
+    name: SPM contract tests green on SHA
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Assert WI-SPM-7 contract tests pass on image_sha
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ inputs.image_sha }}
+        run: |
+          set -euo pipefail
+          required=("contract-vault-lifecycle" "contract-idor-404" "contract-revoke-before-delete" "contract-gdpr-erasure" "contract-opt-in-default-unchecked")
+          for check in "${required[@]}"; do
+            status=$(gh api "/repos/${{ github.repository }}/commits/${SHA}/check-runs?check_name=${check}" \
+              --jq '.check_runs[0].conclusion // "missing"')
+            if [ "$status" != "success" ]; then
+              echo "::error::Required contract check '${check}' = ${status} on ${SHA}"
+              exit 1
+            fi
+            echo "✓ ${check}: success"
+          done
+
+  # =================== SECURITY GATE — P0 (reused) ===================
+  security-gate:
+    name: Preprod security gate (SEC-SPM-001..008)
+    uses: ./.github/workflows/_preprod-security-gate.yml
+    secrets: inherit
+    with:
+      image_sha: ${{ inputs.image_sha }}
+      vertical: spm
+
+  # =================== RUNTIME P0 GATE (reused) ===================
+  runtime-gate-p0:
+    name: Runtime P0 (PreprodSecurityGateTests Tier=P0)
+    needs: [contract-gate, security-gate]
+    uses: ./.github/workflows/_runtime-gate.yml
+    secrets: inherit
+    with:
+      tier: P0
+      image_sha: ${{ inputs.image_sha }}
+      blocking: true
+      rollback_on_fail: true
+      app_name: checkout-api
+      flag_to_disable: saved_payment_methods_v1_enabled
+
+  # =================== SPM-SPECIFIC SMOKE GATE — P0 ===================
+  spm-smoke-gate:
+    name: SPM synthetic probe (GATE-SPM-01..05)
+    needs: [runtime-gate-p0]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Run synthetic-spm.sh probe
+        env:
+          BASE_URL:               https://travel-assistant.app
+          SYNTHETIC_SUB_TOKEN:    ${{ secrets.SYNTHETIC_SUB_TOKEN }}
+          OTHER_SUB_TOKEN:        ${{ secrets.OTHER_SUB_TOKEN }}
+          PROVIDER_SANDBOX_TOKEN: ${{ secrets.PROVIDER_SANDBOX_TOKEN }}
+        run: |
+          chmod +x ./squads/review-deployment/artifacts/spm-deploy-gate/synthetic-spm.sh
+          ./squads/review-deployment/artifacts/spm-deploy-gate/synthetic-spm.sh
+
+  # =================== STAGE FLIP ===================
+  flip-flag:
+    name: Flip feature flag — ${{ inputs.stage }}
+    needs: [spm-smoke-gate]
+    runs-on: ubuntu-latest
+    environment: spm-${{ inputs.stage }}
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Compute target percentage
+        id: pct
+        run: |
+          case "${{ inputs.stage }}" in
+            internal-tenant) echo "value=0"   >> $GITHUB_OUTPUT ;;  # filter by tenant claim, not %
+            canary-1)        echo "value=1"   >> $GITHUB_OUTPUT ;;
+            canary-10)       echo "value=10"  >> $GITHUB_OUTPUT ;;
+            prod-100)        echo "value=100" >> $GITHUB_OUTPUT ;;
+          esac
+      - name: Flip App Configuration flag
+        run: |
+          if [ "${{ inputs.stage }}" = "internal-tenant" ]; then
+            az appconfig feature filter add \
+              --name "${{ env.APP_CONFIG_STORE }}" \
+              --feature "${{ env.FLAG_NAME }}" \
+              --filter-name Microsoft.Targeting \
+              --filter-parameters Audience='{"Groups":[{"Name":"InternalTenant","RolloutPercentage":100}],"DefaultRolloutPercentage":0}' \
+              --yes
+          else
+            az appconfig feature filter add \
+              --name "${{ env.APP_CONFIG_STORE }}" \
+              --feature "${{ env.FLAG_NAME }}" \
+              --filter-name Microsoft.Percentage \
+              --filter-parameters Value=${{ steps.pct.outputs.value }} \
+              --yes
+            az appconfig feature enable \
+              --name "${{ env.APP_CONFIG_STORE }}" \
+              --feature "${{ env.FLAG_NAME }}" --yes
+          fi
+      - name: Soak window
+        run: |
+          case "${{ inputs.stage }}" in
+            internal-tenant) sleep 600  ;;  # 10 min
+            canary-1)        sleep 1800 ;;  # 30 min
+            canary-10)       sleep 3600 ;;  # 60 min
+            prod-100)        sleep 0    ;;
+          esac
+
+  # =================== POST-FLIP ASSERTIONS ===================
+  post-flip-gate:
+    name: Post-flip — opt-in rate + dual-write integrity
+    needs: [flip-flag]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Assert opt-in rate within band (anti-dark-pattern guard)
+        # SEC-SPM-004: sudden spike in opt-in rate triggers UX audit. Floor=2%, Ceiling=40%.
+        # Below floor = checkbox not rendering. Above ceiling = pre-checked or coerced.
+        run: |
+          QUERY='customMetrics | where name == "spm.opt_in_rate" | where timestamp > ago(1h) | summarize avg(value)'
+          RATE=$(az monitor log-analytics query \
+            --workspace "${{ secrets.LOG_ANALYTICS_WORKSPACE }}" \
+            --analytics-query "$QUERY" --query '[0].avg_value' -o tsv || echo "0")
+          echo "opt_in_rate=${RATE}"
+          # only enforce after canary-10 (need volume); skip on internal-tenant + canary-1
+          if [ "${{ inputs.stage }}" = "canary-10" ] || [ "${{ inputs.stage }}" = "prod-100" ]; then
+            awk -v r="$RATE" 'BEGIN { if (r < 0.02 || r > 0.40) exit 1 }' || {
+              echo "::error::opt_in_rate=${RATE} outside [0.02, 0.40] — auto-rollback"
+              exit 1
+            }
+          fi
+      - name: Assert provider-delete-before-local-delete dual-write SLO
+        # GATE-SPM-03 runtime version: % of deletes where local row removed without provider revoke = 0
+        run: |
+          QUERY='customEvents | where name == "spm.delete" | where timestamp > ago(1h) | summarize total = count(), orphaned = countif(customDimensions.provider_revoked == "false") | extend orphan_pct = todouble(orphaned)/todouble(total)'
+          ORPHAN=$(az monitor log-analytics query \
+            --workspace "${{ secrets.LOG_ANALYTICS_WORKSPACE }}" \
+            --analytics-query "$QUERY" --query '[0].orphan_pct' -o tsv || echo "0")
+          echo "orphan_pct=${ORPHAN}"
+          awk -v o="$ORPHAN" 'BEGIN { if (o > 0) exit 1 }' || {
+            echo "::error::Deleted methods without provider revoke detected (${ORPHAN}) — auto-rollback"
+            exit 1
+          }
+      - name: Auto-rollback on failure
+        if: failure()
+        uses: ./.github/actions/checkout-rollback
+        with:
+          app_name: checkout-api
+          flag_to_disable: saved_payment_methods_v1_enabled
+          reason: post-flip-${{ inputs.stage }}-anomaly
+
+  # =================== RUNTIME P1 (reused, advisory) ===================
+  runtime-gate-p1:
+    name: Runtime P1 (advisory, auto-issue on fail)
+    needs: [post-flip-gate]
+    uses: ./.github/workflows/_runtime-gate.yml
+    secrets: inherit
+    with:
+      tier: P1
+      image_sha: ${{ inputs.image_sha }}
+      blocking: false
+      rollback_on_fail: false
+      app_name: checkout-api
+      flag_to_disable: saved_payment_methods_v1_enabled
