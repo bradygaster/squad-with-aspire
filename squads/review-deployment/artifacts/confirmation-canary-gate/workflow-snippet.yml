@@ -1,0 +1,40 @@
+# Snippet to merge into .github/workflows/checkout-canary-promote.yml
+# Add this step to EACH stage job (dark, canary-1, canary-10, canary-50, prod-100)
+# AFTER the existing "Run checkout synthetic probe" step and BEFORE the gate
+# evaluation step that decides promote-vs-rollback.
+#
+# The existing checkout-rollback composite action handles failure — no changes
+# needed there. The step's non-zero exit propagates through workflow conclusion
+# and the existing post-step `if: failure()` triggers rollback.
+
+      - name: Run confirmation endpoint synthetic probe (WI-CONFIRM-1)
+        id: confirm-probe
+        env:
+          BASE_URL: ${{ vars.CANARY_BASE_URL }}
+          SYNTHETIC_TEST_TOKEN: ${{ secrets.SYNTHETIC_TEST_TOKEN }}
+          SYNTHETIC_SUB: ${{ secrets.SYNTHETIC_SUB }}
+          OTHER_SUB_TOKEN: ${{ secrets.OTHER_SUB_TOKEN }}
+          SEEDED_ORDER_PENDING: ${{ secrets.SEEDED_ORDER_PENDING }}
+          SEEDED_ORDER_CONFIRMED: ${{ secrets.SEEDED_ORDER_CONFIRMED }}
+          SEEDED_ORDER_PAYMENT_FAILED: ${{ secrets.SEEDED_ORDER_PAYMENT_FAILED }}
+          SEEDED_ORDER_INVENTORY_RELEASED: ${{ secrets.SEEDED_ORDER_INVENTORY_RELEASED }}
+          SEEDED_ORDER_CANCELED: ${{ secrets.SEEDED_ORDER_CANCELED }}
+        run: |
+          set -e
+          ./.github/scripts/synthetic-order-status.sh
+        timeout-minutes: 3
+
+      - name: Classify confirmation gate failure
+        if: failure() && steps.confirm-probe.conclusion == 'failure'
+        run: |
+          code=$?
+          case $code in
+            1) echo "::error::Confirmation gate: contract violation (status/body)" ;;
+            2) echo "::error::Confirmation gate: IDOR leak — 403 instead of 404" ;;
+            3) echo "::error::Confirmation gate: ETag instability" ;;
+            4) echo "::error::Confirmation gate: Cache-Control header drift" ;;
+            5) echo "::error::Confirmation gate: p95 latency > 800ms" ;;
+            *) echo "::error::Confirmation gate: unknown failure (exit $code)" ;;
+          esac
+          # No explicit rollback call — existing job-level `if: failure()` already
+          # invokes ./.github/actions/checkout-rollback in the next step.
