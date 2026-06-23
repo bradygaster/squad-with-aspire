@@ -1,0 +1,8 @@
+{
+  "name": "@ta/last-page-contract",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/last-page.ts",
+  "exports": { ".": "./src/last-page.ts" }
+}

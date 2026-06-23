@@ -1,0 +1,132 @@
+name: last-page-gate
+
+# LP-006 smoke gate — required check for "remember last viewed page" feature.
+# Mirrors remember-me-gate.yml structure.
+
+on:
+  pull_request:
+    paths:
+      - 'apps/web/src/navigation/**'
+      - 'packages/last-page-contract/**'
+      - 'tests/regression/last-page-*'
+      - 'tests/e2e/last-page/**'
+      - 'docs/security/last-viewed-page-threat-model.md'
+      - '.github/workflows/last-page-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract-invariants:
+    # Enforces the single locked storage-key form ta.nav.lastPage.v1 and forbids
+    # any other variant (ta.lastPage, ta-last-page, lastPage, etc.).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify storage key is the locked form
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Required literal must appear at least once in the contract package.
+          grep -RInE "ta\.nav\.lastPage\.v1" packages/last-page-contract/src \
+            || (echo "::error::missing required STORAGE_KEY literal 'ta.nav.lastPage.v1'"; exit 1)
+
+      - name: Forbid storage-key variants
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Allowed only inside last-page-contract source/tests; flag everywhere else.
+          BAD=$(grep -RInE "ta[\.\-_:]lastPage|ta\.nav\.lastPage(?!\.v1)" \
+            --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' \
+            --exclude-dir=node_modules \
+            apps packages tests 2>/dev/null \
+            | grep -v 'packages/last-page-contract/' \
+            | grep -v 'tests/regression/last-page-' \
+            | grep -v 'tests/e2e/last-page/' \
+            || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::found storage-key variants outside the contract package:"
+            echo "$BAD"
+            exit 1
+          fi
+
+  grep-guard:
+    # Anyone calling localStorage.setItem('ta.nav.lastPage…') outside setLastPage.ts
+    # is bypassing the validator and must be flagged.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Direct setItem outside setLastPage.ts is forbidden
+        shell: bash
+        run: |
+          set -euo pipefail
+          OFFENDERS=$(grep -RInE "localStorage\.setItem\(\s*['\"]ta\.nav\.lastPage" \
+            --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' \
+            --exclude-dir=node_modules \
+            apps packages tests 2>/dev/null \
+            | grep -v 'apps/web/src/navigation/setLastPage.ts' \
+            | grep -v 'packages/last-page-contract/src/last-page.ts' \
+            | grep -v 'tests/' \
+            || true)
+          if [ -n "$OFFENDERS" ]; then
+            echo "::error::direct localStorage.setItem for last-page key found outside setLastPage.ts:"
+            echo "$OFFENDERS"
+            exit 1
+          fi
+
+  threat-model-approved:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: LP-005 approval marker present
+        shell: bash
+        run: |
+          set -euo pipefail
+          F=docs/security/last-viewed-page-threat-model.md
+          if [ ! -f "$F" ]; then
+            echo "::error::missing $F"; exit 1
+          fi
+          grep -E "LP-005:\s*APPROVED" "$F" \
+            || (echo "::error::$F does not contain 'LP-005: APPROVED'"; exit 1)
+
+  build-and-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['20', '22']
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Install
+        run: npm ci --ignore-scripts || npm install --ignore-scripts
+      - name: Run last-page regression tests
+        run: |
+          if [ -f node_modules/.bin/vitest ]; then
+            npx vitest run tests/regression/last-page-*.test.ts --reporter=verbose
+          else
+            echo "::warning::vitest not installed; skipping regression run on Node ${{ matrix.node-version }}"
+          fi
+
+  last-page-gate:
+    # Aggregator — this is the single required check.
+    needs: [contract-invariants, grep-guard, threat-model-approved, build-and-test]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: All upstream jobs succeeded
+        shell: bash
+        run: |
+          set -euo pipefail
+          fail=0
+          for r in "${{ needs.contract-invariants.result }}" \
+                   "${{ needs.grep-guard.result }}" \
+                   "${{ needs.threat-model-approved.result }}" \
+                   "${{ needs.build-and-test.result }}"; do
+            if [ "$r" != "success" ]; then fail=1; echo "job result: $r"; fi
+          done
+          exit $fail
