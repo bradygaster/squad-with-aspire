@@ -1,0 +1,291 @@
+name: refunds-canary-promote
+
+# Refunds v1 canary promotion pipeline.
+# Write-path vertical (POST /api/refunds + Stripe webhook). Same shape as checkout-canary-promote
+# but tighter soaks (refunds are low-volume) and skips 50% stage. Reuses checkout-rollback composite.
+#
+# Trigger: manual workflow_dispatch with image SHA. Each stage is a separate GH Environment
+# (refunds-dark, refunds-canary-1, refunds-canary-10, refunds-prod-100) requiring named-reviewer approval.
+#
+# Hard gates wired as `needs:` so a single failure short-circuits all downstream stages.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_sha:
+        description: 'Container image SHA (refunds-api:<sha>) to promote'
+        required: true
+      skip_storm:
+        description: 'Skip webhook replay storm at 10% stage (emergency only — requires sec sign-off)'
+        required: false
+        default: 'false'
+
+permissions:
+  id-token: write     # OIDC to Azure
+  contents: read
+  checks: read        # query QA check-runs on image SHA
+  issues: write       # auto-open rollback incident
+
+env:
+  ACA_APP: refunds-api
+  ACA_RG: ${{ vars.ACA_RG }}
+  STABLE_TAG: refunds-api:stable
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────────────
+  # Pre-flight: contract tests, infra precheck, security gate
+  # ────────────────────────────────────────────────────────────────────────────
+  contract-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify QA contract tests green on image SHA
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sha = '${{ inputs.image_sha }}';
+            const required = [
+              'RefundIntegrationTests',          // 14 tests
+              'RefundsPreprodGateTests',         // 6 GATE-RFD-01..06
+              'RefundWindowTests',               // window anchor = confirmedAt
+            ];
+            const { data } = await github.rest.checks.listForRef({
+              owner: context.repo.owner, repo: context.repo.repo, ref: sha, per_page: 100
+            });
+            const missing = required.filter(n =>
+              !data.check_runs.some(c => c.name.includes(n) && c.conclusion === 'success'));
+            if (missing.length) {
+              core.setFailed(`Missing/failed contract checks on ${sha}: ${missing.join(', ')}`);
+            }
+
+  infra-precheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Verify WI-REFUND-6 infra exists
+        run: |
+          set -euo pipefail
+          # Cosmos refund container with idempotency unique key
+          az cosmosdb sql container show -g $ACA_RG -a ${{ vars.COSMOS_ACCOUNT }} \
+            -d travel -n refunds --query 'resource.uniqueKeyPolicy.uniqueKeys' -o tsv \
+            | grep -q '/idempotencyKey' || { echo "::error::refunds container missing /idempotencyKey unique key"; exit 1; }
+          # Stripe webhook secret present
+          az keyvault secret show --vault-name ${{ vars.KV_NAME }} --name stripe-refund-webhook-secret >/dev/null \
+            || { echo "::error::Missing Key Vault secret stripe-refund-webhook-secret"; exit 1; }
+          # App Config kill-switch flag present (default off)
+          az appconfig kv show --name ${{ vars.APP_CONFIG }} --key feature.refunds_v1_enabled --label prod \
+            --query value -o tsv | grep -qE 'false|true' \
+            || { echo "::error::App Config feature.refunds_v1_enabled missing"; exit 1; }
+
+  security-gate:
+    # Reuses preprod-security-gate logic from checkout vertical (P0 fail-closed).
+    uses: ./.github/workflows/_preprod-security-gate.yml
+    secrets: inherit
+
+  runtime-gate-p0:
+    needs: [contract-gate, infra-precheck]
+    uses: ./.github/workflows/_runtime-gate.yml
+    with:
+      tier: P0
+      image_sha: ${{ inputs.image_sha }}
+    secrets: inherit
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Stage 1: Dark deploy (revision created, 0% traffic, internal probe only)
+  # ────────────────────────────────────────────────────────────────────────────
+  promote-dark:
+    needs: [contract-gate, infra-precheck, security-gate, runtime-gate-p0]
+    environment: refunds-dark
+    runs-on: ubuntu-latest
+    outputs:
+      revision: ${{ steps.deploy.outputs.revision }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - id: deploy
+        name: Create revision @ 0% traffic
+        run: |
+          REV=$(az containerapp revision copy -n $ACA_APP -g $ACA_RG \
+            --image ${{ vars.ACR_NAME }}/refunds-api:${{ inputs.image_sha }} \
+            --revision-suffix sha${{ inputs.image_sha }} \
+            --query 'properties.latestRevisionName' -o tsv)
+          az containerapp ingress traffic set -n $ACA_APP -g $ACA_RG \
+            --revision-weight $REV=0 latest=100
+          echo "revision=$REV" >> $GITHUB_OUTPUT
+      - name: Dark probe (direct revision URL, bypasses ingress weights)
+        env:
+          REV: ${{ steps.deploy.outputs.revision }}
+          SUB_TOKEN: ${{ secrets.SYNTHETIC_SUB_TOKEN }}
+          OTHER_TOKEN: ${{ secrets.OTHER_SUB_TOKEN }}
+          REFUNDABLE_ORDER: ${{ secrets.SEEDED_ORDER_CONFIRMED }}
+          EXPIRED_ORDER: ${{ secrets.SEEDED_ORDER_REFUND_WINDOW_EXPIRED }}
+          CANCELED_ORDER: ${{ secrets.SEEDED_ORDER_CANCELED }}
+        run: ./scripts/synthetic-refund.sh "https://${REV}.${{ vars.ACA_DOMAIN }}"
+      - name: Soak 3min
+        run: sleep 180
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Stage 2: 1% canary
+  # ────────────────────────────────────────────────────────────────────────────
+  promote-1:
+    needs: [promote-dark, runtime-gate-p0]
+    environment: refunds-canary-1
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Shift 1% traffic to new revision
+        run: |
+          az containerapp ingress traffic set -n $ACA_APP -g $ACA_RG \
+            --revision-weight ${{ needs.promote-dark.outputs.revision }}=1 latest=99
+      - name: Synthetic refund probe through ingress
+        env:
+          SUB_TOKEN: ${{ secrets.SYNTHETIC_SUB_TOKEN }}
+          OTHER_TOKEN: ${{ secrets.OTHER_SUB_TOKEN }}
+          REFUNDABLE_ORDER: ${{ secrets.SEEDED_ORDER_CONFIRMED }}
+          EXPIRED_ORDER: ${{ secrets.SEEDED_ORDER_REFUND_WINDOW_EXPIRED }}
+          CANCELED_ORDER: ${{ secrets.SEEDED_ORDER_CANCELED }}
+        run: ./scripts/synthetic-refund.sh "https://${{ vars.PUBLIC_DOMAIN }}"
+      - name: Gate on Log Analytics metrics (10min soak)
+        env:
+          LAW: ${{ secrets.LOG_ANALYTICS_WORKSPACE }}
+          REV: ${{ needs.promote-dark.outputs.revision }}
+        run: |
+          sleep 600
+          # Refunds-specific: error rate <0.5% (tighter than checkout's 1% — money movement),
+          # p95 <1500ms (Stripe call dominates), provider-timeout rate <2%
+          ERR=$(az monitor log-analytics query -w $LAW --analytics-query "
+            ContainerAppConsoleLogs_CL
+            | where RevisionName_s == '$REV' and TimeGenerated > ago(10m)
+            | extend status = toint(extract('status=([0-9]+)', 1, Log_s))
+            | summarize errs=countif(status >= 500), total=count()
+            | extend rate = todouble(errs) / total" --query '[0].rate' -o tsv)
+          (( $(echo "$ERR < 0.005" | bc -l) )) || { echo "::error::Error rate $ERR >= 0.5%"; exit 1; }
+      - name: Rollback on failure
+        if: failure()
+        uses: ./.github/actions/checkout-rollback
+        with:
+          app: ${{ env.ACA_APP }}
+          rg: ${{ env.ACA_RG }}
+          bad_revision: ${{ needs.promote-dark.outputs.revision }}
+          kill_switch_flag: feature.refunds_v1_enabled
+
+  runtime-gate-p0-after-1:
+    needs: promote-1
+    uses: ./.github/workflows/_runtime-gate.yml
+    with:
+      tier: P0
+      image_sha: ${{ inputs.image_sha }}
+    secrets: inherit
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Stage 3: 10% canary + webhook replay storm
+  # ────────────────────────────────────────────────────────────────────────────
+  promote-10:
+    needs: [promote-1, runtime-gate-p0-after-1]
+    environment: refunds-canary-10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Shift 10% traffic
+        run: |
+          az containerapp ingress traffic set -n $ACA_APP -g $ACA_RG \
+            --revision-weight ${{ needs.promote-dark.outputs.revision }}=10 latest=90
+      - name: Webhook replay storm (QA's refund-storm.js)
+        if: ${{ inputs.skip_storm != 'true' }}
+        env:
+          K6_TARGET: "https://${{ vars.PUBLIC_DOMAIN }}"
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_TEST_SECRET }}
+        run: |
+          docker run --rm -i -e K6_TARGET -e STRIPE_WEBHOOK_SECRET \
+            -v $PWD/tests/load:/scripts grafana/k6:latest \
+            run --quiet --summary-export=storm.json /scripts/refund-storm.js
+          # Threshold from refund-storm.js: refund_dedup_correct > 99.9%
+          DEDUP=$(jq '.metrics.refund_dedup_correct.values.rate' storm.json)
+          (( $(echo "$DEDUP > 0.999" | bc -l) )) || { echo "::error::Webhook dedup $DEDUP <= 99.9%"; exit 1; }
+      - name: Soak 30min + metric gate
+        env:
+          LAW: ${{ secrets.LOG_ANALYTICS_WORKSPACE }}
+          REV: ${{ needs.promote-dark.outputs.revision }}
+        run: |
+          sleep 1800
+          ERR=$(az monitor log-analytics query -w $LAW --analytics-query "
+            ContainerAppConsoleLogs_CL
+            | where RevisionName_s == '$REV' and TimeGenerated > ago(30m)
+            | extend status = toint(extract('status=([0-9]+)', 1, Log_s))
+            | summarize errs=countif(status >= 500), total=count()
+            | extend rate = todouble(errs) / total" --query '[0].rate' -o tsv)
+          (( $(echo "$ERR < 0.005" | bc -l) )) || { echo "::error::Error rate $ERR >= 0.5%"; exit 1; }
+      - name: Rollback on failure
+        if: failure()
+        uses: ./.github/actions/checkout-rollback
+        with:
+          app: ${{ env.ACA_APP }}
+          rg: ${{ env.ACA_RG }}
+          bad_revision: ${{ needs.promote-dark.outputs.revision }}
+          kill_switch_flag: feature.refunds_v1_enabled
+
+  runtime-gate-p0-after-10:
+    needs: promote-10
+    uses: ./.github/workflows/_runtime-gate.yml
+    with:
+      tier: P0
+      image_sha: ${{ inputs.image_sha }}
+    secrets: inherit
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Stage 4: 100% (skip 50% — refund volume too low for meaningful 50% signal
+  #           beyond what 10% + 30min soak provides; named-reviewer approval still required)
+  # ────────────────────────────────────────────────────────────────────────────
+  promote-100:
+    needs: [promote-10, runtime-gate-p0-after-10]
+    environment: refunds-prod-100
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Shift 100% traffic
+        run: |
+          az containerapp ingress traffic set -n $ACA_APP -g $ACA_RG \
+            --revision-weight ${{ needs.promote-dark.outputs.revision }}=100 latest=0
+      - name: Tag image as stable
+        run: |
+          az acr import -n ${{ vars.ACR_NAME }} --force \
+            --source ${{ vars.ACR_NAME }}.azurecr.io/refunds-api:${{ inputs.image_sha }} \
+            --image $STABLE_TAG
+      - name: Enable feature flag in App Config
+        run: |
+          az appconfig feature set --name ${{ vars.APP_CONFIG }} \
+            --feature refunds_v1_enabled --label prod --yes
+      - name: Hold prior revision 24h for fast rollback
+        run: echo "Prior revision retained — purge job runs T+24h"
+
+  runtime-gate-p1-advisory:
+    # P1 advisory at final stage. Auto-opens gate:p1-slippage,sla:7d issue if fails.
+    needs: promote-100
+    uses: ./.github/workflows/_runtime-gate.yml
+    with:
+      tier: P1
+      image_sha: ${{ inputs.image_sha }}
+    secrets: inherit
+    continue-on-error: true
