@@ -1,0 +1,161 @@
+# Drop-in additive job for .github/workflows/refunds-canary-promote.yml
+# Wires QA's refunds-post-deploy-smoke bundle (Hockney) as a post-flip
+# contract gate: runs AFTER each promote-* traffic shift completes and
+# BEFORE that stage's runtime-gate-p0 re-run.
+#
+# Bundle source (apply by maintainer to apps/web/tests/e2e/refunds/post-deploy/):
+#   squads/quality-testing/.squad/session-state/d04adaf9-574b-43db-bdfb-af48311298f9/files/refunds-post-deploy-smoke/
+#
+# Existing per-stage `needs:` chain becomes:
+#   security-gate → refunds-frontend-gate → promote-{stage} → post-deploy-smoke-{stage} → runtime-gate-p0-{stage}
+#
+# Failure semantics: post-deploy-smoke-* fails closed → invokes
+# checkout-rollback composite (same rollback path as runtime-gate-p0).
+# This is INTENTIONAL — a contract drift on live canary traffic is at
+# least as bad as a runtime KPI breach.
+
+jobs:
+  # ---------- one job per stage; copy/adapt for dark/canary-1/canary-10/prod-100 ----------
+
+  post-deploy-smoke-canary-1:
+    needs: [promote-canary-1]
+    runs-on: ubuntu-latest
+    environment: refunds-canary-1
+    timeout-minutes: 5
+    env:
+      STAGE: canary-1
+      # Base URL of the canary revision (single-revision ACA env per refunds spec)
+      BASE_URL: ${{ vars.REFUNDS_CANARY_BASE_URL }}
+      # Seeded synthetic data — see README §seed data (provisioned pre-flip)
+      SEEDED_ORDER_REFUND_ELIGIBLE: ${{ secrets.SEEDED_ORDER_REFUND_ELIGIBLE }}
+      SEEDED_ORDER_REFUND_WINDOW_EXPIRED: ${{ secrets.SEEDED_ORDER_REFUND_WINDOW_EXPIRED }}
+      # Short-lived bearer with refund:write + sub=synthetic-canary-probe
+      # (sub-claim filter excludes from prod SLO/billing dashboards)
+      SYNTHETIC_REFUND_TOKEN: ${{ secrets.SYNTHETIC_REFUND_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify seed-data secrets are wired (pre-flight)
+        run: |
+          missing=0
+          for var in BASE_URL SEEDED_ORDER_REFUND_ELIGIBLE SEEDED_ORDER_REFUND_WINDOW_EXPIRED SYNTHETIC_REFUND_TOKEN; do
+            if [ -z "${!var}" ]; then
+              echo "::error::Missing required env: $var (see README §seed data)"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install Playwright (chromium only)
+        working-directory: apps/web
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Run post-deploy contract smoke (5 specs, ~10s)
+        working-directory: apps/web
+        run: |
+          npx playwright test tests/e2e/refunds/post-deploy/refunds-post-deploy-smoke.spec.ts \
+            --reporter=list,html \
+            --project=chromium
+
+      - name: Upload Playwright report (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-deploy-smoke-${{ env.STAGE }}-${{ github.run_id }}
+          path: apps/web/playwright-report/
+          retention-days: 14
+
+      - name: Rollback on contract drift
+        if: failure()
+        uses: ./.github/actions/checkout-rollback
+        with:
+          stage: ${{ env.STAGE }}
+          reason: "post-deploy contract smoke failed (SMOKE-1..5) — likely SEC-RFD-001 leak, DR-REFUNDS-001 enum drift, or idempotency-replay break"
+          revision-prefix: refunds-api
+
+  post-deploy-smoke-canary-10:
+    needs: [promote-canary-10]
+    runs-on: ubuntu-latest
+    environment: refunds-canary-10
+    timeout-minutes: 5
+    env:
+      STAGE: canary-10
+      BASE_URL: ${{ vars.REFUNDS_CANARY_BASE_URL }}
+      SEEDED_ORDER_REFUND_ELIGIBLE: ${{ secrets.SEEDED_ORDER_REFUND_ELIGIBLE }}
+      SEEDED_ORDER_REFUND_WINDOW_EXPIRED: ${{ secrets.SEEDED_ORDER_REFUND_WINDOW_EXPIRED }}
+      SYNTHETIC_REFUND_TOKEN: ${{ secrets.SYNTHETIC_REFUND_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'npm', cache-dependency-path: apps/web/package-lock.json }
+      - working-directory: apps/web
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npx playwright test tests/e2e/refunds/post-deploy/refunds-post-deploy-smoke.spec.ts --reporter=list,html --project=chromium
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-deploy-smoke-${{ env.STAGE }}-${{ github.run_id }}
+          path: apps/web/playwright-report/
+          retention-days: 14
+      - if: failure()
+        uses: ./.github/actions/checkout-rollback
+        with:
+          stage: ${{ env.STAGE }}
+          reason: "post-deploy contract smoke failed at canary-10"
+          revision-prefix: refunds-api
+
+  post-deploy-smoke-prod-100:
+    needs: [promote-prod-100]
+    runs-on: ubuntu-latest
+    environment: refunds-prod-100
+    timeout-minutes: 5
+    env:
+      STAGE: prod-100
+      BASE_URL: ${{ vars.REFUNDS_PROD_BASE_URL }}
+      SEEDED_ORDER_REFUND_ELIGIBLE: ${{ secrets.SEEDED_ORDER_REFUND_ELIGIBLE_PROD }}
+      SEEDED_ORDER_REFUND_WINDOW_EXPIRED: ${{ secrets.SEEDED_ORDER_REFUND_WINDOW_EXPIRED_PROD }}
+      SYNTHETIC_REFUND_TOKEN: ${{ secrets.SYNTHETIC_REFUND_TOKEN_PROD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'npm', cache-dependency-path: apps/web/package-lock.json }
+      - working-directory: apps/web
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npx playwright test tests/e2e/refunds/post-deploy/refunds-post-deploy-smoke.spec.ts --reporter=list,html --project=chromium
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-deploy-smoke-${{ env.STAGE }}-${{ github.run_id }}
+          path: apps/web/playwright-report/
+          retention-days: 14
+      - if: failure()
+        uses: ./.github/actions/checkout-rollback
+        with:
+          stage: ${{ env.STAGE }}
+          reason: "post-deploy contract smoke failed at prod-100 — IMMEDIATE rollback"
+          revision-prefix: refunds-api
+
+# ---------- patch existing runtime-gate-p0-{stage} jobs ----------
+# Add post-deploy-smoke-{stage} to needs: so p0 runtime gate only fires
+# after contract smoke is green for the same stage. Example diff:
+#
+#   runtime-gate-p0-canary-1:
+# -   needs: [promote-canary-1]
+# +   needs: [promote-canary-1, post-deploy-smoke-canary-1]
+#
+# Repeat for canary-10 and prod-100. Dark stage skips post-deploy-smoke
+# (no live user traffic → no contract regression risk worth a 10s probe;
+# runtime-gate-p0 still runs to catch infra-shape issues).
