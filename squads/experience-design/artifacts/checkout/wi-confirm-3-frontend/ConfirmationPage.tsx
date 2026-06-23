@@ -112,11 +112,29 @@ export const ConfirmationPage: React.FC<ConfirmationPageProps> = ({
   const isError = uiState === 'failed_post_auth' || uiState === 'not_found_or_forbidden';
   const isDelayed = uiState === 'reconciliation_delayed';
 
+  // QA test-hook contract (focus-and-live-region-policy.md §QA Test-Hook Contract):
+  // poll-state mirrors the state machine for Playwright assertions. Single attribute,
+  // values: pending | terminal-success | terminal-error | reconciliation_delayed.
+  const pollStateAttr: 'pending' | 'terminal-success' | 'terminal-error' | 'reconciliation_delayed' =
+    uiState === 'pending_reconciliation' ? 'pending'
+    : isDelayed ? 'reconciliation_delayed'
+    : isError ? 'terminal-error'
+    : 'terminal-success';
+
   return (
     <main aria-labelledby="conf-h1" className={`confirmation-page state-${uiState}`}>
+      {/* QA test hook — mirrors state machine, visually hidden, no a11y impact */}
+      <span
+        data-testid="poll-state"
+        data-state={pollStateAttr}
+        aria-hidden="true"
+        className="sr-only"
+      />
+
       {/* Polite live region for state transition announcements */}
       <div
         ref={liveRegionRef}
+        data-testid="live-region-status"
         role="status"
         aria-live="polite"
         aria-atomic="true"
@@ -178,7 +196,22 @@ export const ConfirmationPage: React.FC<ConfirmationPageProps> = ({
         </section>
       )}
 
-      {/* Error states: actionable recovery paths */}
+      {/* Error states: actionable recovery paths.
+          The h1 already carries the error message and receives focus (policy §3).
+          We also expose a role=alert mirror with data-testid="live-region-error" so
+          QA's forbidden-patterns.spec.ts can assert assertive announcement without
+          requiring two competing focus targets. The mirror is sr-only — visual users
+          see the h1, AT users get one announcement (h1 focus + alert is deduped by
+          most AT because content matches). */}
+      {isError && (
+        <div
+          role="alert"
+          data-testid="live-region-error"
+          className="sr-only"
+        >
+          {copy.h1}
+        </div>
+      )}
       {isError && (
         <section aria-labelledby="error-actions-h2" className="error-actions">
           <h2 id="error-actions-h2">What you can do</h2>

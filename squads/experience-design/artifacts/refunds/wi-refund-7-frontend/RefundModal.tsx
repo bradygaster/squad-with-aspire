@@ -268,14 +268,39 @@ export const RefundModal: React.FC<RefundModalProps> = ({
             </div>
           )}
 
-          <div className="refund-modal__live" aria-live="polite" aria-atomic="true">
+          {/* QA test hook — poll-state mirrors state machine.
+              Values per focus-and-live-region-policy.md §QA Test-Hook Contract. */}
+          <span
+            data-testid="poll-state"
+            data-state={
+              state.kind === 'polling' || state.kind === 'submitting' ? 'pending'
+              : state.kind === 'succeeded' ? 'terminal-success'
+              : state.kind === 'failed' ? 'terminal-error'
+              : state.kind === 'inline_already_exists' ? 'pending'
+              : 'idle'
+            }
+            aria-hidden="true"
+            className="sr-only"
+          />
+
+          <div
+            className="refund-modal__live"
+            data-testid="live-region-status"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
             {state.kind === 'succeeded' && 'Refund completed.'}
             {isBusy && 'Processing refund…'}
           </div>
 
           {state.kind === 'failed' && (
-            <div role="alert" className="refund-modal__error" data-testid="refund-error-message">
-              {state.copy}
+            <div
+              role="alert"
+              className="refund-modal__error"
+              data-testid="live-region-error"
+            >
+              <span data-testid="refund-error-message">{state.copy}</span>
             </div>
           )}
         </div>
