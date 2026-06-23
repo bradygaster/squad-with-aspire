@@ -1,0 +1,104 @@
+# Retro privacy enforcement rules (TR-007)
+# Refs: docs/security/retro-privacy.md §5
+# Scope: retro module paths only — avoids false positives on unrelated code.
+rules:
+  - id: no-raw-post-in-log
+    severity: ERROR
+    languages: [csharp]
+    message: >
+      Raw retro IC posts must never appear in log output. Use aggregate
+      sentiment or a redacted post ID instead. See docs/security/retro-privacy.md §2 (Information disclosure).
+    paths:
+      include:
+        - "**/retro/**"
+        - "**/Retro/**"
+        - "src/AspireWithSquad.Retro*/**"
+    pattern-either:
+      - pattern: $LOG.LogInformation(..., $POST.RawText, ...)
+      - pattern: $LOG.LogWarning(..., $POST.RawText, ...)
+      - pattern: $LOG.LogError(..., $POST.RawText, ...)
+      - pattern: $LOG.LogDebug(..., $POST.RawText, ...)
+      - pattern: $LOG.LogInformation(..., $POST.raw_text, ...)
+      - pattern: $LOG.LogTrace(..., $POST, ...)
+
+  - id: no-raw-post-in-otel-attr
+    severity: ERROR
+    languages: [csharp]
+    message: >
+      Do not attach raw post text to OpenTelemetry spans/activities.
+      OTel attributes are exported and may land in observability backends.
+      See docs/security/retro-privacy.md §2 (Information disclosure).
+    paths:
+      include:
+        - "**/retro/**"
+        - "**/Retro/**"
+        - "src/AspireWithSquad.Retro*/**"
+    pattern-either:
+      - pattern: $ACT.SetTag("$KEY", $POST.RawText)
+      - pattern: $ACT.SetTag("$KEY", $POST.raw_text)
+      - pattern: $SPAN.SetAttribute("$KEY", $POST.RawText)
+      - pattern: $SPAN.SetAttribute("post.text", ...)
+      - pattern: $SPAN.SetAttribute("post.body", ...)
+      - pattern: $SPAN.SetAttribute("raw_text", ...)
+
+  - id: require-aad-on-raw-encrypt
+    severity: ERROR
+    languages: [csharp]
+    message: >
+      AesGcm.Encrypt on raw retro posts must include associatedData
+      bound to (retro_id || post_id || author_id) to prevent ciphertext-swap.
+      See docs/security/retro-privacy.md §3.1.
+    paths:
+      include:
+        - "**/retro/**"
+        - "**/Retro/**"
+        - "src/AspireWithSquad.Retro*/**"
+    patterns:
+      - pattern: $AES.Encrypt($NONCE, $PT, $CT, $TAG)
+      - pattern-not: $AES.Encrypt($NONCE, $PT, $CT, $TAG, $AAD)
+
+  - id: no-bulk-raw-export
+    severity: ERROR
+    languages: [csharp]
+    message: >
+      No bulk-export path for RawPost. Read-in-UI only; facilitators
+      view individual posts which emit audit events.
+      See docs/security/retro-privacy.md §6 D5-5.
+    paths:
+      include:
+        - "**/retro/**"
+        - "**/Retro/**"
+        - "src/AspireWithSquad.Retro*/**"
+      exclude:
+        - "**/Reducer/**"
+        - "**/reducer/**"
+        - "**/PurgeJob*"
+    pattern-either:
+      - pattern: |
+          public IEnumerable<RawPost> $METHOD(...) { ... }
+      - pattern: |
+          public RawPost[] $METHOD(...) { ... }
+      - pattern: |
+          public List<RawPost> $METHOD(...) { ... }
+      - pattern: |
+          public Task<IEnumerable<RawPost>> $METHOD(...) { ... }
+      - pattern: |
+          public Task<RawPost[]> $METHOD(...) { ... }
+
+  - id: action-item-body-from-raw-post
+    severity: ERROR
+    languages: [csharp]
+    message: >
+      Action-item bodies must be composed from aggregated/voted text,
+      never from RawPost properties. TR-003 synthesizer is aggregate-only.
+      See docs/security/retro-privacy.md §2 + §6 D5-4.
+    paths:
+      include:
+        - "**/retro/**"
+        - "**/Retro/**"
+        - "src/AspireWithSquad.Retro*/**"
+    pattern-either:
+      - pattern: new ActionItem { Body = $POST.RawText, ... }
+      - pattern: new ActionItem { ..., Body = $POST.RawText }
+      - pattern: $AI.Body = $POST.RawText
+      - pattern: CreateIssue(..., body: $POST.RawText, ...)
