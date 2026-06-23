@@ -29,7 +29,7 @@ public enum ProviderCancelOutcome
     Accepted,        // → domain event cancel.accepted
     Pending,         // async; await webhook
     Declined,        // terminal; ineligible at provider (e.g., already captured + refunded)
-    Rejected,        // → domain event cancel.rejected_by_provider (DR-CANCEL-002 R4) — terminal-and-retryable, subject to rate cap + window. Distinct from Declined: Declined is provider-side terminal ineligibility (ALREADY_CAPTURED_AND_REFUNDED), Rejected is provider-side runtime refusal (e.g., Stripe charge.dispute.created mid-cancel, Adyen /cancels refused). NEVER triggers inventory release.
+    Rejected,        // → domain event cancel.rejected_by_provider (DR-CANCEL-002 R4, refined by DR-CANCEL-003 R4'). Per DR-003: order state returns to Confirmed (NO new CancelRejected state); reuse existing OrderStateChanged event (no new client-facing event type); refund eligibility flag set true immediately (24h refund window anchor remains order.confirmedAt, NOT reset by failed cancel — gameable otherwise); rate-cap budget REFUNDED (not spent) via pending→spent state in WI-CANCEL-1 backend. NEVER triggers inventory release. Distinct from Declined: Declined = provider-side terminal ineligibility (ALREADY_CAPTURED_AND_REFUNDED, surfaces as 409 ORDER_NOT_CANCELLABLE{already_refunded}); Rejected = provider-side runtime refusal (Stripe charge.dispute.created mid-cancel, Adyen /cancels refused).
     GatewayTimeout,  // retryable
     Unavailable      // retryable
 }
