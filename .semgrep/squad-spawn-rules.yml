@@ -160,3 +160,79 @@ rules:
               metavariable: $ARGS
               patterns:
                 - pattern-not-regex: '^\[.*\]$'
+  - id: squad-copilot-spawn-must-use-resolver
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: |
+      Bare spawn/execFile of 'copilot' (or 'gh') as a string literal is forbidden outside
+      packages/squad-cli/src/cli/util/copilot-cli.ts. Use resolveCopilotCmd() from that
+      module to get the absolute, PATHEXT-resolved binary path with shim handling.
+
+      Discovered findings of this bug class:
+        - packages/squad-cli/src/cli/commands/watch/copilot-bridge.ts:36 (ACP probe)
+        - packages/squad-cli/src/cli/commands/watch/copilot-bridge.ts:84 (ACP spawn)
+        - loop.ts:251, :394 (covered by #1372 — historical)
+
+      On Windows, `copilot` is a `.cmd` shim that requires PATHEXT resolution; calling
+      execFile('copilot', ...) without shell handling fails silently or — worse — picks
+      up an attacker-planted `copilot.exe` earlier on PATH.
+
+      See: analysis/squad-1372/path-hijack-risk.md, exec-call-site-audit.md.
+    metadata:
+      category: security
+      cwe: "CWE-427: Uncontrolled Search Path Element"
+      references:
+        - https://github.com/bradygaster/squad/issues/1372
+    paths:
+      include:
+        - "packages/squad-cli/src/**/*.ts"
+        - "packages/squad-cli/src/**/*.js"
+      exclude:
+        - "packages/squad-cli/src/cli/util/copilot-cli.ts"
+        - "packages/squad-cli/src/cli/util/copilot-cli.js"
+        - "**/*.test.ts"
+        - "**/*.spec.ts"
+    patterns:
+      - pattern-either:
+          - pattern: child_process.execFile("copilot", ...)
+          - pattern: child_process.execFileSync("copilot", ...)
+          - pattern: child_process.spawn("copilot", ...)
+          - pattern: child_process.spawnSync("copilot", ...)
+          - pattern: execFile("copilot", ...)
+          - pattern: execFileSync("copilot", ...)
+          - pattern: spawn("copilot", ...)
+          - pattern: spawnSync("copilot", ...)
+
+  - id: squad-shim-spawn-needs-shell-flag
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: |
+      Spawning a Windows-shim-eligible binary (copilot, gh, npm, npx, yarn, pnpm) without
+      passing `shell: IS_WINDOWS` (or absolute resolved path) will fail on Windows where
+      these binaries are `.cmd` shims requiring PATHEXT resolution.
+
+      Either: (a) resolve to absolute path via where.exe lookup, OR (b) pass
+      `shell: IS_WINDOWS` from cli/util/copilot-cli.ts. Bare `'copilot'`/`'gh'` literals
+      should additionally route through resolveCopilotCmd().
+
+      See: analysis/squad-1372/windows-shim-rules.md.
+    metadata:
+      category: portability
+      references:
+        - https://github.com/bradygaster/squad/issues/1372
+    paths:
+      include:
+        - "packages/**/*.ts"
+        - "packages/**/*.js"
+      exclude:
+        - "**/*.test.ts"
+        - "**/*.spec.ts"
+        - "**/node_modules/**"
+    patterns:
+      - pattern-either:
+          - pattern: child_process.spawn("gh", ...)
+          - pattern: child_process.execFile("gh", ...)
+          - pattern: spawn("gh", ...)
+          - pattern: execFile("gh", ...)
+      - pattern-not-inside: |
+          { ..., shell: $X, ... }
