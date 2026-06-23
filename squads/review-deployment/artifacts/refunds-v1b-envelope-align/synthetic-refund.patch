@@ -1,0 +1,24 @@
+--- a/squads/review-deployment/artifacts/refunds-deploy-gate/synthetic-refund.sh
++++ b/squads/review-deployment/artifacts/refunds-deploy-gate/synthetic-refund.sh
+@@ -62,15 +62,15 @@
+-# ── GATE-RFD-03: Window expired — 409 with reason=window_expired ──
++# ── GATE-RFD-03: Window expired — 409 with code=REFUND_INELIGIBLE_WINDOW_EXPIRED (v1b envelope) ──
+ HTTP=$(curl -sS -o /tmp/refund-body.json -w "%{http_code}" -X POST -H "Authorization: Bearer $TOKEN" \
+   -H "Idempotency-Key: $(uuidgen)" \
+   "$BASE/api/orders/${EXPIRED_ORDER}/refunds")
+ check "GATE-RFD-03 status=409 (window expired)" "409" "$HTTP"
+-REASON=$(jq -r '.error.reason' /tmp/refund-body.json)
+-check "GATE-RFD-03 reason=window_expired" "window_expired" "$REASON"
++CODE=$(jq -r '.error.code' /tmp/refund-body.json)
++check "GATE-RFD-03 code=REFUND_INELIGIBLE_WINDOW_EXPIRED" "REFUND_INELIGIBLE_WINDOW_EXPIRED" "$CODE"
+
+-# ── GATE-RFD-04: Already-canceled order — 409 with reason=canceled ──
++# ── GATE-RFD-04: Already-canceled order — 409 with code=REFUND_INELIGIBLE_CANCELED (v1b envelope) ──
+ HTTP=$(curl -sS -o /tmp/refund-body.json -w "%{http_code}" -X POST -H "Authorization: Bearer $TOKEN" \
+   -H "Idempotency-Key: $(uuidgen)" \
+   "$BASE/api/orders/${CANCELED_ORDER}/refunds")
+ check "GATE-RFD-04 status=409 (canceled)" "409" "$HTTP"
+-REASON=$(jq -r '.error.reason' /tmp/refund-body.json)
+-check "GATE-RFD-04 reason=canceled" "canceled" "$REASON"
++CODE=$(jq -r '.error.code' /tmp/refund-body.json)
++check "GATE-RFD-04 code=REFUND_INELIGIBLE_CANCELED" "REFUND_INELIGIBLE_CANCELED" "$CODE"
