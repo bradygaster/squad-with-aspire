@@ -1,0 +1,116 @@
+# Refunds frontend gate — drop-in addition to refunds-canary-promote.yml
+#
+# WIRING:
+#   1. Paste the `refunds-frontend-gate` job below into refunds-canary-promote.yml
+#      (after `security-gate`, before `promote-dark`).
+#   2. Add `refunds-frontend-gate` to every `needs:` list on the promote-* jobs.
+#      Final shape: needs: [security-gate, refunds-frontend-gate, runtime-gate-p0]
+#   3. No new secrets. Reuses node + Playwright cache from existing app-dev CI.
+
+jobs:
+  refunds-frontend-gate:
+    name: Refunds frontend gate (WI-REFUND-4)
+    runs-on: ubuntu-latest
+    needs: [security-gate]
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install web deps
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-${{ runner.os }}-${{ hashFiles('apps/web/package-lock.json') }}
+
+      - name: Install Playwright (chromium only)
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+
+      - name: Verify WI-REFUND-4 bundle present
+        run: |
+          set -euo pipefail
+          missing=0
+          for f in \
+            apps/web/tests/e2e/refunds/RefundModal.spec.ts \
+            apps/web/tests/e2e/refunds/refund-axe-checks.spec.ts \
+            docs/qa/refunds/refund-a11y-manual.md
+          do
+            [[ -f "$f" ]] || { echo "::error::Missing: $f"; missing=1; }
+          done
+          [[ $missing -eq 0 ]]
+
+      - name: Build web (production bundle)
+        working-directory: apps/web
+        env:
+          VITE_REFUNDS_V1_ENABLED: 'true'
+        run: npm run build
+
+      - name: Provider token non-exposure (SEC-RFD-001 / GATE-RFD-06)
+        working-directory: apps/web
+        run: |
+          set -euo pipefail
+          patterns='\b(re|pi|ch|pm|tok|src)_[A-Za-z0-9]{8,}'
+          if grep -REn -- "$patterns" dist/ >/tmp/leak.txt 2>/dev/null; then
+            echo "::error::Provider token literal found in production bundle"
+            head -50 /tmp/leak.txt
+            exit 1
+          fi
+          echo "OK: no provider tokens in dist/"
+
+      - name: Playwright E2E (15 cases, pinned to UX spec 4c84355)
+        working-directory: apps/web
+        run: npx playwright test tests/e2e/refunds/RefundModal.spec.ts
+
+      - name: Axe sweeps (4 rules)
+        working-directory: apps/web
+        run: npx playwright test tests/e2e/refunds/refund-axe-checks.spec.ts
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: refunds-frontend-playwright-report
+          path: apps/web/playwright-report
+          retention-days: 14
+
+      - name: Upload axe results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: refunds-frontend-axe-results
+          path: apps/web/axe-results
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: SR manual sign-off (PR runs only)
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          pr="${{ github.event.pull_request.number }}"
+          labels=$(gh pr view "$pr" --json labels --jq '.labels[].name')
+          if ! echo "$labels" | grep -qx 'qa-signed-off:refunds-sr'; then
+            echo "::error::Missing label 'qa-signed-off:refunds-sr' — one NVDA/VoiceOver script from docs/qa/refunds/refund-a11y-manual.md must be signed off before refunds canary can promote."
+            exit 1
+          fi
+          echo "OK: SR sign-off label present"
