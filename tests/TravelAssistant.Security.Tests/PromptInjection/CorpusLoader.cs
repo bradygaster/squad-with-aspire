@@ -23,6 +23,7 @@
 // (CorpusResultsCollector.cs) and the QA eval (tests/llm-eval/CorpusEchoTests.cs)
 // both depend on the field names below.
 
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
