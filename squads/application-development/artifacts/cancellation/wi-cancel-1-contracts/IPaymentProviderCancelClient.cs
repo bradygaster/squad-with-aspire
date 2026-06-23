@@ -29,6 +29,7 @@ public enum ProviderCancelOutcome
     Accepted,        // → domain event cancel.accepted
     Pending,         // async; await webhook
     Declined,        // terminal; ineligible at provider (e.g., already captured + refunded)
+    Rejected,        // → domain event cancel.rejected_by_provider (DR-CANCEL-002 R4) — terminal-and-retryable, subject to rate cap + window. Distinct from Declined: Declined is provider-side terminal ineligibility (ALREADY_CAPTURED_AND_REFUNDED), Rejected is provider-side runtime refusal (e.g., Stripe charge.dispute.created mid-cancel, Adyen /cancels refused). NEVER triggers inventory release.
     GatewayTimeout,  // retryable
     Unavailable      // retryable
 }
