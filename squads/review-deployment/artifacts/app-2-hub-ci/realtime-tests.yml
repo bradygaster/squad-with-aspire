@@ -1,0 +1,132 @@
+# SignalR realtime tests gate — APP-2 ChatHub
+#
+# Install path in target repo: .github/workflows/realtime-tests.yml
+#
+# Self-skips when ChatHubLifecycleTests.cs is absent, so safe to merge ahead of
+# feat/app-2-hub. Once that branch lands on main, this gate becomes active and
+# enforces the 4 lifecycle invariants (StartTurn idempotency, CancelTurn emit,
+# CancelTurn idempotency, TryCancel snapshot race) on every PR touching the hub
+# surface or its dependencies.
+#
+# Pairs with: pii-redactor-gate.yml, prompt-injection-gate.yml,
+#             supply-chain-scan.yml (same self-skip + inline-parser pattern).
+
+name: realtime-tests
+
+on:
+  pull_request:
+    paths:
+      - 'src/TravelAssistant.Api/Hubs/**'
+      - 'src/TravelAssistant.Api/Realtime/**'
+      - 'src/TravelAssistant.Api/Program.cs'
+      - 'tests/TravelAssistant.Api.Tests/Realtime/**'
+      - 'tests/TravelAssistant.Api.Tests/Hubs/**'
+      - '.github/workflows/realtime-tests.yml'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  realtime:
+    name: SignalR realtime lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect realtime test surface
+        id: detect
+        run: |
+          set -euo pipefail
+          if [ -f tests/TravelAssistant.Api.Tests/Realtime/ChatHubLifecycleTests.cs ] \
+             || [ -f tests/TravelAssistant.Api.Tests/Hubs/ChatHubLifecycleTests.cs ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::ChatHubLifecycleTests.cs not present — gate self-skipping (waiting on feat/app-2-hub merge)."
+          fi
+
+      - uses: actions/setup-dotnet@v4
+        if: steps.detect.outputs.present == 'true'
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore
+        if: steps.detect.outputs.present == 'true'
+        run: dotnet restore TravelAssistant.slnx
+
+      - name: Build (Release)
+        if: steps.detect.outputs.present == 'true'
+        run: dotnet build TravelAssistant.slnx -c Release --no-restore /warnaserror
+
+      - name: Run realtime tests
+        if: steps.detect.outputs.present == 'true'
+        env:
+          # Hub tests rely on TestServer + Microsoft.AspNetCore.SignalR.Client.
+          # No external infra (Redis, SB) required — the in-process scaler is fine.
+          ASPNETCORE_ENVIRONMENT: Testing
+        run: |
+          dotnet test tests/TravelAssistant.Api.Tests/TravelAssistant.Api.Tests.csproj \
+            -c Release --no-build \
+            --filter "FullyQualifiedName~Realtime|FullyQualifiedName~ChatHub" \
+            --logger "trx;LogFileName=realtime.trx" \
+            --logger "console;verbosity=normal" \
+            --results-directory TestResults
+
+      - name: Upload test results
+        if: always() && steps.detect.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: realtime-trx
+          path: TestResults/realtime.trx
+          if-no-files-found: warn
+
+      - name: Enforce lifecycle invariants
+        if: steps.detect.outputs.present == 'true'
+        run: |
+          python3 - <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          trx = Path("TestResults/realtime.trx")
+          if not trx.exists():
+              print("::error::realtime.trx missing — dotnet test did not produce results")
+              sys.exit(1)
+
+          ns = {"t": "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"}
+          root = ET.parse(trx).getroot()
+
+          # Required lifecycle assertions — fail closed if ANY are missing or failed.
+          required = {
+              "G005_duplicate_StartTurn":              "StartTurn idempotency",
+              "G004_CancelTurn_emits_turn_end":        "CancelTurn end emit",
+              "CancelTurn_is_idempotent":              "CancelTurn idempotency",
+              "DEFECT3_TryCancel":                     "TryCancel/Snapshot race",
+          }
+
+          results = {}
+          for r in root.findall(".//t:UnitTestResult", ns):
+              name = r.get("testName", "")
+              outcome = r.get("outcome", "")
+              for key in required:
+                  if key in name:
+                      results.setdefault(key, []).append((name, outcome))
+
+          missing = [k for k in required if k not in results]
+          failed  = [(k, n, o) for k, runs in results.items() for (n, o) in runs if o != "Passed"]
+
+          if missing:
+              for k in missing:
+                  print(f"::error::Required lifecycle test missing: {required[k]} ({k}*)")
+          if failed:
+              for k, n, o in failed:
+                  print(f"::error::Lifecycle test failed: {n} -> {o}")
+
+          if missing or failed:
+              sys.exit(1)
+
+          print(f"✓ All {len(required)} lifecycle invariants verified.")
+          PY

@@ -1,0 +1,198 @@
+name: supply-chain-scan
+
+on:
+  pull_request:
+    paths:
+      - '**/*.csproj'
+      - '**/Directory.Packages.props'
+      - '**/packages.lock.json'
+      - '.github/supply-chain-allowlist.yml'
+      - '.github/workflows/supply-chain-scan.yml'
+  push:
+    branches: [main]
+    paths:
+      - '**/*.csproj'
+      - '**/Directory.Packages.props'
+      - '**/packages.lock.json'
+  schedule:
+    # Daily 06:00 UTC — catches newly-disclosed CVEs against pinned versions.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  vulnerable:
+    name: dotnet list package --vulnerable
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Detect solution
+        id: sln
+        run: |
+          if [ -f TravelAssistant.slnx ]; then
+            echo "file=TravelAssistant.slnx" >> "$GITHUB_OUTPUT"
+          elif [ -f TravelAssistant.sln ]; then
+            echo "file=TravelAssistant.sln" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::No solution file found — scanning current directory."
+            echo "file=." >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore
+        run: dotnet restore ${{ steps.sln.outputs.file }}
+
+      - name: Vulnerable scan (direct + transitive)
+        id: scan
+        run: |
+          set -o pipefail
+          dotnet list ${{ steps.sln.outputs.file }} package --vulnerable --include-transitive \
+            | tee vulnerable.txt
+          # Exit non-zero if any High/Critical advisory line appears.
+          if grep -E '> .* (High|Critical)' vulnerable.txt > /dev/null; then
+            echo "::error::High or Critical vulnerability detected. See artifact 'vulnerable-report'."
+            exit 1
+          fi
+          # Moderate is reported as a warning, doesn't fail the build.
+          if grep -E '> .* Moderate' vulnerable.txt > /dev/null; then
+            echo "::warning::Moderate vulnerability detected. Review before merge."
+          fi
+
+      - name: Upload vulnerability report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vulnerable-report
+          path: vulnerable.txt
+          retention-days: 30
+
+  deprecated:
+    name: dotnet list package --deprecated
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - name: Detect solution
+        id: sln
+        run: |
+          if [ -f TravelAssistant.slnx ]; then
+            echo "file=TravelAssistant.slnx" >> "$GITHUB_OUTPUT"
+          elif [ -f TravelAssistant.sln ]; then
+            echo "file=TravelAssistant.sln" >> "$GITHUB_OUTPUT"
+          else
+            echo "file=." >> "$GITHUB_OUTPUT"
+          fi
+      - run: dotnet restore ${{ steps.sln.outputs.file }}
+      - name: Deprecated scan (advisory only)
+        run: |
+          dotnet list ${{ steps.sln.outputs.file }} package --deprecated | tee deprecated.txt
+          if grep -E '> ' deprecated.txt > /dev/null; then
+            echo "::warning::Deprecated package(s) detected. Plan migration."
+          fi
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deprecated-report
+          path: deprecated.txt
+          retention-days: 30
+
+  allowlist:
+    name: top-level dependency allowlist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Detect solution
+        id: sln
+        run: |
+          if [ -f TravelAssistant.slnx ]; then
+            echo "file=TravelAssistant.slnx" >> "$GITHUB_OUTPUT"
+          else
+            echo "file=TravelAssistant.sln" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Self-skip if allowlist absent
+        id: gate
+        run: |
+          if [ ! -f .github/supply-chain-allowlist.yml ]; then
+            echo "::notice::.github/supply-chain-allowlist.yml not found — skipping allowlist check."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.gate.outputs.skip == 'false'
+        run: dotnet restore ${{ steps.sln.outputs.file }}
+
+      - name: Enforce allowlist
+        if: steps.gate.outputs.skip == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet list ${{ steps.sln.outputs.file }} package --format json > packages.json
+
+          python3 - <<'PY'
+          import json, sys, re
+          try:
+              import yaml
+          except ImportError:
+              import subprocess
+              subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--quiet', 'pyyaml'])
+              import yaml
+
+          with open('.github/supply-chain-allowlist.yml') as f:
+              allow = yaml.safe_load(f) or {}
+          allowed = { (e['id'].lower(), e.get('pin')) for e in allow.get('packages', []) }
+          allowed_ids = { e['id'].lower() for e in allow.get('packages', []) }
+          review_required = { e['id'].lower() for e in allow.get('review_required', []) }
+
+          with open('packages.json') as f:
+              pkgs = json.load(f)
+
+          violations = []
+          review_hits = []
+          seen = set()
+          for proj in pkgs.get('projects', []):
+              for fw in proj.get('frameworks', []) or []:
+                  for p in fw.get('topLevelPackages', []) or []:
+                      pid = p['id'].lower()
+                      ver = p.get('resolvedVersion') or p.get('requestedVersion')
+                      key = (pid, ver)
+                      if key in seen:
+                          continue
+                      seen.add(key)
+                      if pid in review_required:
+                          review_hits.append((p['id'], ver))
+                      if pid not in allowed_ids:
+                          violations.append((p['id'], ver, proj.get('path', '?')))
+
+          if review_hits:
+              print('::group::Packages flagged for human review (advisory)')
+              for n, v in sorted(review_hits):
+                  print(f'  ⚠ {n} {v}')
+              print('::endgroup::')
+
+          if violations:
+              print('::error::Top-level package(s) not in .github/supply-chain-allowlist.yml:')
+              for n, v, path in sorted(violations):
+                  print(f'  ✗ {n} {v}  ({path})')
+              print('')
+              print('Action: add the package to .github/supply-chain-allowlist.yml under `packages:` after sec-squad review,')
+              print('or under `review_required:` if it should warn but not block.')
+              sys.exit(1)
+
+          print(f'✓ {len(seen)} top-level package(s) all allowlisted.')
+          PY

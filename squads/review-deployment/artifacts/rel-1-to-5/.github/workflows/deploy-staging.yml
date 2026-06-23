@@ -1,0 +1,186 @@
+name: Deploy to Staging
+
+# REL-2: On merge to main, deploy via `azd` to the staging environment,
+# then run Playwright smoke tests. On smoke failure, roll back the
+# Container Apps revision (REL-5).
+#
+# Prerequisites (configured by azure-infrastructure-squad):
+#   - GitHub OIDC federation to Azure (no client secrets)
+#   - Repo secrets: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+#   - Repo variables: AZURE_ENV_NAME=staging, AZURE_LOCATION
+#   - azd template wired to the Aspire AppHost
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      skip_smoke:
+        description: "Skip Playwright smoke tests"
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+env:
+  AZURE_ENV_NAME: ${{ vars.AZURE_ENV_NAME || 'staging' }}
+  AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'westeurope' }}
+
+jobs:
+  deploy:
+    name: azd deploy → staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: staging
+      url: ${{ steps.deploy.outputs.endpoint_url }}
+    outputs:
+      previous_revision: ${{ steps.snapshot.outputs.previous_revision }}
+      endpoint_url: ${{ steps.deploy.outputs.endpoint_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Install azd
+        uses: Azure/setup-azd@v2
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: azd auth login (federated)
+        run: |
+          azd auth login \
+            --client-id "${{ secrets.AZURE_CLIENT_ID }}" \
+            --federated-credential-provider github \
+            --tenant-id "${{ secrets.AZURE_TENANT_ID }}"
+
+      - name: Resolve canonical names from azd/Bicep outputs
+        id: names
+        run: |
+          set -e
+          azd env select "$AZURE_ENV_NAME" 2>/dev/null || true
+          # Prefer Bicep outputs (azure-infrastructure-squad publishes these).
+          RG=$(azd env get-value RESOURCE_GROUP_NAME 2>/dev/null || echo "rg-travel-assistant-${AZURE_ENV_NAME}")
+          APP_NAME=$(azd env get-value API_CONTAINER_APP_NAME 2>/dev/null || echo "ca-api-${AZURE_ENV_NAME}")
+          echo "rg=$RG" >> "$GITHUB_OUTPUT"
+          echo "app_name=$APP_NAME" >> "$GITHUB_OUTPUT"
+          echo "Resolved RG=$RG APP=$APP_NAME"
+
+      - name: Snapshot current revision (for rollback)
+        id: snapshot
+        run: |
+          set -e
+          RG="${{ steps.names.outputs.rg }}"
+          APP_NAME="${{ steps.names.outputs.app_name }}"
+          # Verify the app exists; fall back to discovery if Bicep output was stale.
+          if ! az containerapp show -g "$RG" -n "$APP_NAME" >/dev/null 2>&1; then
+            APP_NAME=$(az containerapp list -g "$RG" --query "[?starts_with(name,'ca-api') || contains(name,'api')].name | [0]" -o tsv || true)
+          fi
+          if [ -n "$APP_NAME" ]; then
+            REV=$(az containerapp revision list -g "$RG" -n "$APP_NAME" \
+              --query "[?properties.active].name | [0]" -o tsv)
+            echo "previous_revision=${APP_NAME}::${REV}" >> "$GITHUB_OUTPUT"
+            echo "Captured previous revision: ${APP_NAME}::${REV}"
+          else
+            echo "previous_revision=" >> "$GITHUB_OUTPUT"
+            echo "No existing Container App found — first deploy."
+          fi
+
+      - name: azd deploy
+        id: deploy
+        run: |
+          set -e
+          azd env select "$AZURE_ENV_NAME" 2>/dev/null || azd env new "$AZURE_ENV_NAME" --location "$AZURE_LOCATION" --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+          azd deploy --no-prompt
+          URL=$(azd env get-values | grep -E '^SERVICE_API_URI|^API_URL' | head -1 | cut -d'=' -f2- | tr -d '"' || true)
+          echo "endpoint_url=${URL:-https://staging.travel-assistant.invalid}" >> "$GITHUB_OUTPUT"
+
+  smoke:
+    name: Playwright smoke (staging)
+    needs: deploy
+    if: ${{ inputs.skip_smoke != true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      result: ${{ steps.run.outcome }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Playwright
+        working-directory: tests/smoke
+        run: |
+          if [ -f package.json ]; then
+            npm ci
+            npx playwright install --with-deps chromium
+          else
+            echo "::warning::tests/smoke not present — skipping smoke run."
+            exit 0
+          fi
+
+      - name: Run smoke
+        id: run
+        working-directory: tests/smoke
+        env:
+          STAGING_URL: ${{ needs.deploy.outputs.endpoint_url }}
+        run: |
+          if [ -f package.json ]; then
+            npx playwright test --reporter=line
+          fi
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: tests/smoke/playwright-report
+          if-no-files-found: ignore
+          retention-days: 7
+
+  rollback:
+    name: Rollback on smoke failure
+    needs: [deploy, smoke]
+    if: failure() && needs.deploy.outputs.previous_revision != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Pin traffic back to previous revision
+        run: |
+          set -e
+          PREV="${{ needs.deploy.outputs.previous_revision }}"
+          APP_NAME="${PREV%%::*}"
+          REV_NAME="${PREV##*::}"
+          # Re-resolve RG from azd outputs if available, fall back to convention.
+          RG=$(azd env get-value RESOURCE_GROUP_NAME 2>/dev/null || echo "rg-travel-assistant-${AZURE_ENV_NAME}")
+          echo "Rolling back $APP_NAME → $REV_NAME in $RG"
+          az containerapp ingress traffic set \
+            -g "$RG" -n "$APP_NAME" \
+            --revision-weight "${REV_NAME}=100"
+          az containerapp revision deactivate \
+            -g "$RG" -n "$APP_NAME" --revision "$(az containerapp revision list -g "$RG" -n "$APP_NAME" --query "[?name!='$REV_NAME' && properties.active].name | [0]" -o tsv)" || true
+
+      - name: Notify rollback
+        run: echo "::error::Staging deploy rolled back to ${{ needs.deploy.outputs.previous_revision }}. See docs/runbooks/rollback.md."

@@ -1,4 +1,24 @@
 {
-  "universe_usage_history": [],
-  "assignment_cast_snapshots": {}
+  "universe_usage_history": [
+    {
+      "universe": "Ocean's Eleven",
+      "assignment_id": "experience-design-2026-06-23",
+      "used_at": "2026-06-23"
+    }
+  ],
+  "assignment_cast_snapshots": {
+    "experience-design-2026-06-23": {
+      "universe": "Ocean's Eleven",
+      "agents": {
+        "rusty": "Rusty",
+        "linus": "Linus",
+        "saul": "Saul",
+        "yen": "Yen",
+        "livingston": "Livingston",
+        "basher": "Basher"
+      },
+      "created_at": "2026-06-23",
+      "notes": "Initial cast hire for experience-design squad. Replaces 6 legacy_named placeholder agents (UserExperienceAgent etc.) now retired to _alumni/."
+    }
+  }
 }

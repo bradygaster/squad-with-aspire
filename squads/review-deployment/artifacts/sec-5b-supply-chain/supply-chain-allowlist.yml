@@ -1,0 +1,59 @@
+# Top-level NuGet dependency allowlist for travel-assistant
+#
+# Enforced by .github/workflows/supply-chain-scan.yml (job: allowlist).
+# Rules:
+#   - Every top-level (direct) package reference across all projects in the solution
+#     MUST appear under `packages:` OR `review_required:`.
+#   - `packages:`        → approved by security-hardening-squad. No CI noise.
+#   - `review_required:` → emits an advisory warning on every run. Use for
+#                          new top-level deps awaiting sec-squad signoff.
+#   - Transitive packages are NOT enforced here — they're covered by the
+#     `vulnerable` and `deprecated` jobs.
+#
+# To add a package:
+#   1. Open a PR adding it under `review_required:` first.
+#   2. security-hardening-squad reviews license, maintainer reputation, CVE history.
+#   3. On approval, move the entry to `packages:` in a follow-up PR.
+#
+# `pin:` is optional advisory metadata — the gate does NOT enforce exact versions
+# (that's `Directory.Packages.props`'s job). It's here so reviewers can see the
+# version that was approved at allowlist time.
+
+packages:
+  # --- Aspire / hosting ---
+  - { id: Aspire.Hosting.AppHost, pin: '9.*' }
+  - { id: Aspire.Hosting.Azure, pin: '9.*' }
+
+  # --- ASP.NET Core / runtime extensions ---
+  - { id: Microsoft.AspNetCore.SignalR.StackExchangeRedis, pin: '9.*' }
+  - { id: Microsoft.Extensions.Configuration.AzureAppConfiguration, pin: '8.*' }
+  - { id: Microsoft.Extensions.Http.Resilience, pin: '9.*' }
+
+  # --- Azure SDK ---
+  - { id: Azure.Identity, pin: '1.*' }
+  - { id: Azure.Security.KeyVault.Secrets, pin: '4.*' }
+  - { id: Azure.AI.OpenAI, pin: '2.*' }
+
+  # --- OpenTelemetry ---
+  - { id: OpenTelemetry.Exporter.OpenTelemetryProtocol, pin: '1.*' }
+  - { id: OpenTelemetry.Extensions.Hosting, pin: '1.*' }
+  - { id: OpenTelemetry.Instrumentation.AspNetCore, pin: '1.*' }
+  - { id: OpenTelemetry.Instrumentation.Http, pin: '1.*' }
+
+  # --- Test stack ---
+  - { id: xunit, pin: '2.*' }
+  - { id: xunit.runner.visualstudio, pin: '2.*' }
+  - { id: Microsoft.NET.Test.Sdk, pin: '17.*' }
+  - { id: FluentAssertions, pin: '6.*' }
+  - { id: Microsoft.AspNetCore.SignalR.Client, pin: '9.*' }
+  - { id: Microsoft.AspNetCore.Mvc.Testing, pin: '9.*' }
+  - { id: Microsoft.Playwright, pin: '1.*' }
+  - { id: YamlDotNet, pin: '16.*' }
+
+review_required:
+  # NEW (2026-06-23): added by application-development-squad on the web host
+  # per ADR-0002 (XD-6 component-library decision). XD pre-checked clean via
+  # `dotnet list package --vulnerable`. Sec-squad: confirm license (MIT),
+  # maintainer reputation, and CVE history at MudBlazor 7.x latest stable,
+  # then move this entry to `packages:` above.
+  - { id: MudBlazor, pin: '7.*' }

@@ -1,3 +1,95 @@
 {
-  "agents": {}
+  "agents": {
+    "ResearchAgent": {
+      "persistent_name": "ResearchAgent",
+      "universe": null,
+      "created_at": "2026-06-15",
+      "legacy_named": true,
+      "status": "active",
+      "role": "Discovery research lead",
+      "naming_convention": "PascalCase ending in Agent"
+    },
+    "CompetitiveAnalysisAgent": {
+      "persistent_name": "CompetitiveAnalysisAgent",
+      "universe": null,
+      "created_at": "2026-06-15",
+      "legacy_named": true,
+      "status": "active",
+      "role": "Market and landscape analyst",
+      "naming_convention": "PascalCase ending in Agent"
+    },
+    "ProductManagerAgent": {
+      "persistent_name": "ProductManagerAgent",
+      "universe": null,
+      "created_at": "2026-06-15",
+      "legacy_named": true,
+      "status": "active",
+      "role": "Opportunity and product definition lead",
+      "naming_convention": "PascalCase ending in Agent"
+    },
+    "TechnicalArchitectAgent": {
+      "persistent_name": "TechnicalArchitectAgent",
+      "universe": null,
+      "created_at": "2026-06-15",
+      "legacy_named": true,
+      "status": "active",
+      "role": "Feasibility and solution architect",
+      "naming_convention": "PascalCase ending in Agent"
+    },
+    "PlanningAgent": {
+      "persistent_name": "PlanningAgent",
+      "universe": null,
+      "created_at": "2026-06-15",
+      "legacy_named": true,
+      "status": "active",
+      "role": "Delivery planning lead",
+      "naming_convention": "PascalCase ending in Agent"
+    },
+    "ScribeAgent": {
+      "persistent_name": "ScribeAgent",
+      "universe": null,
+      "created_at": "2026-06-15",
+      "legacy_named": true,
+      "status": "active",
+      "role": "Durable artifact steward",
+      "naming_convention": "PascalCase ending in Agent",
+      "notes": "Distinct from built-in Scribe; ScribeAgent owns user-facing durable artifacts (PRDs, ADRs, handoff packets)."
+    },
+    "Scribe": {
+      "persistent_name": "Scribe",
+      "universe": null,
+      "created_at": "2026-06-15",
+      "legacy_named": false,
+      "status": "active",
+      "role": "Session logger & decision merger",
+      "naming_convention": "built-in canonical name (exempt from casting)"
+    },
+    "Ralph": {
+      "persistent_name": "Ralph",
+      "universe": null,
+      "created_at": "2026-06-15",
+      "legacy_named": false,
+      "status": "active",
+      "role": "Work monitor",
+      "naming_convention": "built-in canonical name (exempt from casting)"
+    },
+    "Rai": {
+      "persistent_name": "Rai",
+      "universe": null,
+      "created_at": "2026-06-15",
+      "legacy_named": false,
+      "status": "active",
+      "role": "RAI reviewer",
+      "naming_convention": "built-in canonical name (exempt from casting)"
+    },
+    "Fact Checker": {
+      "persistent_name": "Fact Checker",
+      "universe": null,
+      "created_at": "2026-06-23",
+      "legacy_named": false,
+      "status": "active",
+      "role": "Verification & Devil's Advocate",
+      "naming_convention": "built-in canonical name (exempt from casting)"
+    }
+  }
 }

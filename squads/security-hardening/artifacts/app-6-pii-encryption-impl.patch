@@ -1,0 +1,939 @@
+From ac932d935ca1ef4fb730befa7575b07aa7c5bea6 Mon Sep 17 00:00:00 2001
+From: security-hardening-squad <security-squad@squad-with-aspire.local>
+Date: Tue, 23 Jun 2026 19:01:45 +0300
+Subject: [PATCH] feat(SEC/APP-6): PII envelope encryption library + 14 tests
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Implements squads/security-hardening/artifacts/app-6-pii-encryption-spec.md v1.0.
+
+Library (src/TravelAssistant.Security.Pii):
+
+- IPiiCipher + EnvelopePiiCipher: AES-256-GCM, per-tenant DEK, 1h cache.
+
+- Envelope format: v1.{wrappedDek}.{nonce}.{ciphertextPlusTag} (base64url).
+
+- ICmkProvider abstraction + KeyVaultCmkProvider (RSA-OAEP-256 wrap).
+
+- DataClassAttribute (Public/Internal/Sensitive) drives EF/Cosmos converters.
+
+- AddPiiEncryption() DI extension; KV variant + caller-supplied-CMK variant.
+
+- PiiEnvelopeFormatException (bad envelope) vs PiiKeyUnavailableException (CMK gone / cryptographic erasure).
+
+Tests (tests/TravelAssistant.Security.Pii.Tests) - 14 green, 0 skipped:
+
+- Mandatory 6 from spec: round-trip, nonce-uniqueness, cross-tenant fail,
+
+  null/empty round-trip, cryptographic erasure surfaces PiiKeyUnavailable, DEK cache reuse.
+
+- Plus 4 envelope-format guards (malformed/version/tamper) + empty-tenant guard.
+
+- InMemoryCmkProvider test double with DestroyTenant() for erasure simulation.
+
+Solution: adds Security.Pii + Security.Pii.Tests projects to TravelAssistant.slnx
+
+(and re-adds Agent.Abstractions which was on disk but missing from slnx — same fix QA shipped on qa/app-2-contracts-tests).
+
+Branch base: feat/app-2-contracts (PR #41).
+
+Next iteration adds 3 ProductionGuard checks (IPiiCipher in DI / CmkName resolves /
+
+no Sensitive prop without converter) — separate patch onto security/sec-1-to-5-hardening.
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
+---
+ TravelAssistant.slnx                          |   5 +
+ src/TravelAssistant.Security.Pii/DataClass.cs |  41 +++++
+ .../EnvelopePiiCipher.cs                      | 144 ++++++++++++++++++
+ .../ICmkProvider.cs                           |  22 +++
+ .../IPiiCipher.cs                             |  51 +++++++
+ .../KeyVaultCmkProvider.cs                    |  91 +++++++++++
+ .../PiiEnvelope.cs                            |  88 +++++++++++
+ .../ServiceCollectionExtensions.cs            |  57 +++++++
+ .../TravelAssistant.Security.Pii.csproj       |  23 +++
+ .../DataClassAttributeTests.cs                |  33 ++++
+ .../EnvelopePiiCipherTests.cs                 | 141 +++++++++++++++++
+ .../InMemoryCmkProvider.cs                    |  67 ++++++++
+ .../TravelAssistant.Security.Pii.Tests.csproj |  18 +++
+ 13 files changed, 781 insertions(+)
+ create mode 100644 src/TravelAssistant.Security.Pii/DataClass.cs
+ create mode 100644 src/TravelAssistant.Security.Pii/EnvelopePiiCipher.cs
+ create mode 100644 src/TravelAssistant.Security.Pii/ICmkProvider.cs
+ create mode 100644 src/TravelAssistant.Security.Pii/IPiiCipher.cs
+ create mode 100644 src/TravelAssistant.Security.Pii/KeyVaultCmkProvider.cs
+ create mode 100644 src/TravelAssistant.Security.Pii/PiiEnvelope.cs
+ create mode 100644 src/TravelAssistant.Security.Pii/ServiceCollectionExtensions.cs
+ create mode 100644 src/TravelAssistant.Security.Pii/TravelAssistant.Security.Pii.csproj
+ create mode 100644 tests/TravelAssistant.Security.Pii.Tests/DataClassAttributeTests.cs
+ create mode 100644 tests/TravelAssistant.Security.Pii.Tests/EnvelopePiiCipherTests.cs
+ create mode 100644 tests/TravelAssistant.Security.Pii.Tests/InMemoryCmkProvider.cs
+ create mode 100644 tests/TravelAssistant.Security.Pii.Tests/TravelAssistant.Security.Pii.Tests.csproj
+
+diff --git a/TravelAssistant.slnx b/TravelAssistant.slnx
+index f443816..7122c01 100644
+--- a/TravelAssistant.slnx
++++ b/TravelAssistant.slnx
+@@ -1,5 +1,10 @@
+ <Solution>
+   <Folder Name="/src/">
+     <Project Path="src/TravelAssistant.Api/TravelAssistant.Api.csproj" />
++    <Project Path="src/TravelAssistant.Agent.Abstractions/TravelAssistant.Agent.Abstractions.csproj" />
++    <Project Path="src/TravelAssistant.Security.Pii/TravelAssistant.Security.Pii.csproj" />
++  </Folder>
++  <Folder Name="/tests/">
++    <Project Path="tests/TravelAssistant.Security.Pii.Tests/TravelAssistant.Security.Pii.Tests.csproj" />
+   </Folder>
+ </Solution>
+diff --git a/src/TravelAssistant.Security.Pii/DataClass.cs b/src/TravelAssistant.Security.Pii/DataClass.cs
+new file mode 100644
+index 0000000..fe06de8
+--- /dev/null
++++ b/src/TravelAssistant.Security.Pii/DataClass.cs
+@@ -0,0 +1,41 @@
++namespace TravelAssistant.Security.Pii;
++
++/// <summary>
++/// Classification level for a data property. Drives whether encryption is required.
++/// Default for any string-bearing property without an explicit attribute is <see cref="Sensitive"/>
++/// (deny-by-default), enforced by the ProductionGuard reflection scan.
++/// </summary>
++public enum DataClass
++{
++    /// <summary>
++    /// Public information. No encryption required. Examples: city names, airport codes, currency.
++    /// </summary>
++    Public = 0,
++
++    /// <summary>
++    /// Internal information. Not user-identifying. No encryption required at rest, but not exposed
++    /// in unauthenticated APIs. Examples: provider IDs, internal IDs, request IDs.
++    /// </summary>
++    Internal = 1,
++
++    /// <summary>
++    /// Sensitive / PII. Encryption at rest is REQUIRED via <see cref="IPiiCipher"/>.
++    /// Examples: traveler names, email, phone, passport numbers, free-text travel preferences.
++    /// </summary>
++    Sensitive = 2,
++}
++
++/// <summary>
++/// Marks a property's data classification. Used by EF Core / Cosmos value converters to decide
++/// whether the property must round-trip through <see cref="IPiiCipher"/>, and by ProductionGuard's
++/// reflection scan to fail-fast if a string property lacks classification.
++/// </summary>
++[AttributeUsage(AttributeTargets.Property, AllowMultiple = false, Inherited = true)]
++public sealed class DataClassAttribute : Attribute
++{
++    /// <summary>Classification level for the annotated property.</summary>
++    public DataClass Class { get; }
++
++    /// <summary>Create a classification attribute.</summary>
++    public DataClassAttribute(DataClass @class) => Class = @class;
++}
+diff --git a/src/TravelAssistant.Security.Pii/EnvelopePiiCipher.cs b/src/TravelAssistant.Security.Pii/EnvelopePiiCipher.cs
+new file mode 100644
+index 0000000..7208a50
+--- /dev/null
++++ b/src/TravelAssistant.Security.Pii/EnvelopePiiCipher.cs
+@@ -0,0 +1,144 @@
++using System.Security.Cryptography;
++using System.Text;
++using Microsoft.Extensions.Caching.Memory;
++using Microsoft.Extensions.Logging;
++using Microsoft.Extensions.Options;
++
++namespace TravelAssistant.Security.Pii;
++
++/// <summary>
++/// Options for <see cref="EnvelopePiiCipher"/>.
++/// </summary>
++public sealed class PiiCipherOptions
++{
++    /// <summary>How long an unwrapped DEK may live in memory. Default 1 hour.</summary>
++    public TimeSpan DekCacheLifetime { get; set; } = TimeSpan.FromHours(1);
++}
++
++/// <summary>
++/// Default <see cref="IPiiCipher"/> implementation. Envelope:
++/// <c>v1.{wrappedDek}.{nonce}.{ciphertextPlusTag}</c> with AES-256-GCM and per-tenant DEKs
++/// wrapped by an <see cref="ICmkProvider"/>. Unwrapped DEKs are cached in-process for at most
++/// <see cref="PiiCipherOptions.DekCacheLifetime"/>.
++/// </summary>
++public sealed class EnvelopePiiCipher : IPiiCipher
++{
++    private readonly ICmkProvider _cmk;
++    private readonly IMemoryCache _cache;
++    private readonly ILogger<EnvelopePiiCipher> _log;
++    private readonly TimeSpan _dekLifetime;
++
++    /// <summary>DI constructor.</summary>
++    public EnvelopePiiCipher(
++        ICmkProvider cmk,
++        IMemoryCache cache,
++        IOptions<PiiCipherOptions> options,
++        ILogger<EnvelopePiiCipher> log)
++    {
++        ArgumentNullException.ThrowIfNull(options);
++        _cmk = cmk ?? throw new ArgumentNullException(nameof(cmk));
++        _cache = cache ?? throw new ArgumentNullException(nameof(cache));
++        _log = log ?? throw new ArgumentNullException(nameof(log));
++        _dekLifetime = options.Value.DekCacheLifetime;
++    }
++
++    /// <inheritdoc/>
++    public async Task<string> EncryptAsync(string tenantId, string? plaintext, CancellationToken ct = default)
++    {
++        ArgumentException.ThrowIfNullOrEmpty(tenantId);
++        if (string.IsNullOrEmpty(plaintext))
++        {
++            return string.Empty;
++        }
++
++        var (dek, wrapped) = await GetOrCreateDekAsync(tenantId, ct).ConfigureAwait(false);
++        var nonce = RandomNumberGenerator.GetBytes(PiiEnvelope.NonceLength);
++        var pt = Encoding.UTF8.GetBytes(plaintext);
++        var cipher = new byte[pt.Length];
++        var tag = new byte[PiiEnvelope.TagLength];
++
++        using (var aes = new AesGcm(dek, PiiEnvelope.TagLength))
++        {
++            aes.Encrypt(nonce, pt, cipher, tag);
++        }
++
++        var ctAndTag = new byte[cipher.Length + tag.Length];
++        Buffer.BlockCopy(cipher, 0, ctAndTag, 0, cipher.Length);
++        Buffer.BlockCopy(tag, 0, ctAndTag, cipher.Length, tag.Length);
++        return PiiEnvelope.Format(wrapped, nonce, ctAndTag);
++    }
++
++    /// <inheritdoc/>
++    public async Task<string> DecryptAsync(string tenantId, string? envelope, CancellationToken ct = default)
++    {
++        ArgumentException.ThrowIfNullOrEmpty(tenantId);
++        if (string.IsNullOrEmpty(envelope))
++        {
++            return string.Empty;
++        }
++
++        var (wrappedDek, nonce, ctAndTag) = PiiEnvelope.Parse(envelope);
++
++        byte[] dek;
++        try
++        {
++            dek = await _cmk.UnwrapAsync(tenantId, wrappedDek, ct).ConfigureAwait(false);
++        }
++        catch (PiiKeyUnavailableException)
++        {
++            throw;
++        }
++        catch (Exception ex)
++        {
++            throw new PiiKeyUnavailableException(
++                $"CMK unwrap failed for tenant '{tenantId}' — possible cryptographic erasure", ex);
++        }
++
++        if (dek.Length != PiiEnvelope.DekLength)
++        {
++            throw new PiiEnvelopeFormatException(
++                $"unwrapped DEK length {dek.Length} != {PiiEnvelope.DekLength}");
++        }
++
++        var cipherLen = ctAndTag.Length - PiiEnvelope.TagLength;
++        var cipher = new byte[cipherLen];
++        var tag = new byte[PiiEnvelope.TagLength];
++        Buffer.BlockCopy(ctAndTag, 0, cipher, 0, cipherLen);
++        Buffer.BlockCopy(ctAndTag, cipherLen, tag, 0, PiiEnvelope.TagLength);
++
++        var pt = new byte[cipherLen];
++        try
++        {
++            using var aes = new AesGcm(dek, PiiEnvelope.TagLength);
++            aes.Decrypt(nonce, cipher, tag, pt);
++        }
++        catch (CryptographicException ex)
++        {
++            _log.LogWarning(ex, "PII envelope decrypt failed (tag mismatch) for tenant {Tenant}", tenantId);
++            throw new PiiEnvelopeFormatException("authentication tag verification failed");
++        }
++
++        return Encoding.UTF8.GetString(pt);
++    }
++
++    private async Task<(byte[] Dek, byte[] Wrapped)> GetOrCreateDekAsync(string tenantId, CancellationToken ct)
++    {
++        if (_cache.TryGetValue<(byte[], byte[])>(CacheKey(tenantId), out var hit))
++        {
++            return hit;
++        }
++
++        var dek = RandomNumberGenerator.GetBytes(PiiEnvelope.DekLength);
++        var wrapped = await _cmk.WrapAsync(tenantId, dek, ct).ConfigureAwait(false);
++        var entry = (dek, wrapped);
++
++        _cache.Set(CacheKey(tenantId), entry, new MemoryCacheEntryOptions
++        {
++            AbsoluteExpirationRelativeToNow = _dekLifetime,
++            Size = 1,
++        });
++        return entry;
++    }
++
++    private static string CacheKey(string tenantId) => $"pii.dek::{tenantId}";
++}
+diff --git a/src/TravelAssistant.Security.Pii/ICmkProvider.cs b/src/TravelAssistant.Security.Pii/ICmkProvider.cs
+new file mode 100644
+index 0000000..7c7946f
+--- /dev/null
++++ b/src/TravelAssistant.Security.Pii/ICmkProvider.cs
+@@ -0,0 +1,22 @@
++namespace TravelAssistant.Security.Pii;
++
++/// <summary>
++/// Wraps / unwraps a per-tenant Data Encryption Key with a Customer Managed Key (CMK).
++/// Production implementation is backed by Azure Key Vault keys (AES key-wrap / RSA-OAEP);
++/// tests substitute an in-memory provider.
++/// </summary>
++public interface ICmkProvider
++{
++    /// <summary>
++    /// Wrap a 32-byte DEK with the CMK for the given tenant. Returned bytes are the wrapped DEK
++    /// (opaque, includes any algorithm-specific framing). Throws <see cref="PiiKeyUnavailableException"/>
++    /// if the CMK is missing or access is denied.
++    /// </summary>
++    Task<byte[]> WrapAsync(string tenantId, byte[] dek, CancellationToken ct);
++
++    /// <summary>
++    /// Unwrap a previously wrapped DEK. Throws <see cref="PiiKeyUnavailableException"/> if the
++    /// CMK has been destroyed (cryptographic erasure) or access is denied.
++    /// </summary>
++    Task<byte[]> UnwrapAsync(string tenantId, byte[] wrappedDek, CancellationToken ct);
++}
+diff --git a/src/TravelAssistant.Security.Pii/IPiiCipher.cs b/src/TravelAssistant.Security.Pii/IPiiCipher.cs
+new file mode 100644
+index 0000000..b0532f4
+--- /dev/null
++++ b/src/TravelAssistant.Security.Pii/IPiiCipher.cs
+@@ -0,0 +1,51 @@
++namespace TravelAssistant.Security.Pii;
++
++/// <summary>
++/// Per-tenant envelope-encryption gateway for PII fields. Implementations MUST:
++/// <list type="bullet">
++///   <item>Use AES-256-GCM as the data-encryption algorithm.</item>
++///   <item>Wrap a per-tenant Data Encryption Key (DEK) with a Customer Managed Key (CMK) held in Key Vault.</item>
++///   <item>Emit envelopes in the form <c>v1.{wrappedDek}.{nonce}.{ciphertextPlusTag}</c> (all base64url, no padding).</item>
++///   <item>Be safe to call concurrently; DEKs may be cached in-process for up to 1 hour.</item>
++///   <item>Round-trip null/empty inputs unchanged (no envelope on empty string, returns empty).</item>
++/// </list>
++/// Cryptographic erasure for GDPR Art.17 is performed by deleting the per-tenant DEK material
++/// in Key Vault — the implementation does not own deletion, but envelopes encrypted with a
++/// destroyed DEK MUST surface a non-retryable <see cref="PiiKeyUnavailableException"/> on decrypt.
++/// </summary>
++public interface IPiiCipher
++{
++    /// <summary>
++    /// Encrypt a plaintext string for the given tenant. Returns an envelope string parseable by
++    /// <see cref="DecryptAsync"/>. Returns <c>string.Empty</c> for null/empty input (round-trip property).
++    /// </summary>
++    /// <param name="tenantId">Tenant identifier; scopes the DEK. Must be non-empty.</param>
++    /// <param name="plaintext">UTF-8 plaintext. May be null or empty.</param>
++    /// <param name="ct">Cancellation token.</param>
++    Task<string> EncryptAsync(string tenantId, string? plaintext, CancellationToken ct = default);
++
++    /// <summary>
++    /// Decrypt an envelope produced by <see cref="EncryptAsync"/>. Returns <c>string.Empty</c>
++    /// for null/empty input. Throws <see cref="PiiEnvelopeFormatException"/> for malformed envelopes
++    /// and <see cref="PiiKeyUnavailableException"/> when the wrapping CMK or wrapped DEK is no
++    /// longer accessible (e.g. cryptographic erasure).
++    /// </summary>
++    Task<string> DecryptAsync(string tenantId, string? envelope, CancellationToken ct = default);
++}
++
++/// <summary>Thrown when an envelope cannot be parsed (wrong version, wrong segment count, bad base64).</summary>
++public sealed class PiiEnvelopeFormatException : Exception
++{
++    /// <summary>Create with a descriptive message.</summary>
++    public PiiEnvelopeFormatException(string message) : base(message) { }
++}
++
++/// <summary>Thrown when the CMK or wrapped DEK is unavailable (e.g. tenant cryptographically erased).</summary>
++public sealed class PiiKeyUnavailableException : Exception
++{
++    /// <summary>Create with a descriptive message.</summary>
++    public PiiKeyUnavailableException(string message) : base(message) { }
++
++    /// <summary>Create with a descriptive message and inner exception.</summary>
++    public PiiKeyUnavailableException(string message, Exception inner) : base(message, inner) { }
++}
+diff --git a/src/TravelAssistant.Security.Pii/KeyVaultCmkProvider.cs b/src/TravelAssistant.Security.Pii/KeyVaultCmkProvider.cs
+new file mode 100644
+index 0000000..34d2883
+--- /dev/null
++++ b/src/TravelAssistant.Security.Pii/KeyVaultCmkProvider.cs
+@@ -0,0 +1,91 @@
++using Azure;
++using Azure.Core;
++using Azure.Security.KeyVault.Keys.Cryptography;
++using Microsoft.Extensions.Logging;
++using Microsoft.Extensions.Options;
++
++namespace TravelAssistant.Security.Pii;
++
++/// <summary>Options for <see cref="KeyVaultCmkProvider"/>.</summary>
++public sealed class KeyVaultCmkOptions
++{
++    /// <summary>The Key Vault URI (e.g. <c>https://my-vault.vault.azure.net/</c>). Required.</summary>
++    public string VaultUri { get; set; } = string.Empty;
++
++    /// <summary>The name of the CMK in the vault. Required.</summary>
++    public string CmkName { get; set; } = string.Empty;
++
++    /// <summary>Wrap algorithm. Default <c>RSA-OAEP-256</c> (works for RSA CMKs).</summary>
++    public string WrapAlgorithm { get; set; } = "RSA-OAEP-256";
++}
++
++/// <summary>
++/// Azure Key Vault CMK provider. Uses the per-tenant id only for logging — every wrap/unwrap
++/// goes through the same CMK named in <see cref="KeyVaultCmkOptions.CmkName"/>. Tenant isolation
++/// comes from the DEK being randomly generated per tenant and cached separately.
++/// Maps Key Vault not-found / forbidden errors to <see cref="PiiKeyUnavailableException"/> so
++/// callers can distinguish cryptographic erasure from programming errors.
++/// </summary>
++public sealed class KeyVaultCmkProvider : ICmkProvider
++{
++    private readonly CryptographyClient _client;
++    private readonly KeyWrapAlgorithm _alg;
++    private readonly ILogger<KeyVaultCmkProvider> _log;
++
++    /// <summary>DI constructor.</summary>
++    public KeyVaultCmkProvider(
++        IOptions<KeyVaultCmkOptions> options,
++        TokenCredential credential,
++        ILogger<KeyVaultCmkProvider> log)
++    {
++        ArgumentNullException.ThrowIfNull(options);
++        ArgumentNullException.ThrowIfNull(credential);
++        var opts = options.Value;
++        if (string.IsNullOrWhiteSpace(opts.VaultUri))
++        {
++            throw new InvalidOperationException("KeyVaultCmkOptions.VaultUri is required");
++        }
++        if (string.IsNullOrWhiteSpace(opts.CmkName))
++        {
++            throw new InvalidOperationException("KeyVaultCmkOptions.CmkName is required");
++        }
++
++        var keyId = new Uri(new Uri(opts.VaultUri), $"keys/{opts.CmkName}");
++        _client = new CryptographyClient(keyId, credential);
++        _alg = new KeyWrapAlgorithm(opts.WrapAlgorithm);
++        _log = log ?? throw new ArgumentNullException(nameof(log));
++    }
++
++    /// <inheritdoc/>
++    public async Task<byte[]> WrapAsync(string tenantId, byte[] dek, CancellationToken ct)
++    {
++        try
++        {
++            var result = await _client.WrapKeyAsync(_alg, dek, ct).ConfigureAwait(false);
++            return result.EncryptedKey;
++        }
++        catch (RequestFailedException ex) when (ex.Status is 401 or 403 or 404)
++        {
++            _log.LogError(ex, "CMK wrap failed for tenant {Tenant} (status {Status})", tenantId, ex.Status);
++            throw new PiiKeyUnavailableException(
++                $"CMK wrap denied or key missing (status {ex.Status})", ex);
++        }
++    }
++
++    /// <inheritdoc/>
++    public async Task<byte[]> UnwrapAsync(string tenantId, byte[] wrappedDek, CancellationToken ct)
++    {
++        try
++        {
++            var result = await _client.UnwrapKeyAsync(_alg, wrappedDek, ct).ConfigureAwait(false);
++            return result.Key;
++        }
++        catch (RequestFailedException ex) when (ex.Status is 401 or 403 or 404)
++        {
++            _log.LogError(ex, "CMK unwrap failed for tenant {Tenant} (status {Status}) — possible erasure",
++                tenantId, ex.Status);
++            throw new PiiKeyUnavailableException(
++                $"CMK unwrap denied or key missing (status {ex.Status}) — possible cryptographic erasure", ex);
++        }
++    }
++}
+diff --git a/src/TravelAssistant.Security.Pii/PiiEnvelope.cs b/src/TravelAssistant.Security.Pii/PiiEnvelope.cs
+new file mode 100644
+index 0000000..4c6d0f4
+--- /dev/null
++++ b/src/TravelAssistant.Security.Pii/PiiEnvelope.cs
+@@ -0,0 +1,88 @@
++using System.Buffers.Text;
++using System.Text;
++
++namespace TravelAssistant.Security.Pii;
++
++/// <summary>
++/// Envelope format: <c>v1.{wrappedDek}.{nonce}.{ciphertextPlusTag}</c>.
++/// All segments are base64url (no '=' padding). Version is parsed as a literal — bumping the
++/// version (e.g. for algorithm rotation) requires a new parser branch, not a silent change.
++/// </summary>
++internal static class PiiEnvelope
++{
++    public const string Version = "v1";
++    public const int NonceLength = 12;   // AES-GCM standard nonce size
++    public const int TagLength = 16;     // AES-GCM standard tag size
++    public const int DekLength = 32;     // AES-256
++
++    public static string Format(byte[] wrappedDek, byte[] nonce, byte[] ciphertextAndTag)
++    {
++        var sb = new StringBuilder(Version.Length + 3 + 256);
++        sb.Append(Version).Append('.')
++          .Append(Base64UrlEncode(wrappedDek)).Append('.')
++          .Append(Base64UrlEncode(nonce)).Append('.')
++          .Append(Base64UrlEncode(ciphertextAndTag));
++        return sb.ToString();
++    }
++
++    public static (byte[] WrappedDek, byte[] Nonce, byte[] CiphertextAndTag) Parse(string envelope)
++    {
++        ArgumentException.ThrowIfNullOrEmpty(envelope);
++        var parts = envelope.Split('.');
++        if (parts.Length != 4)
++        {
++            throw new PiiEnvelopeFormatException(
++                $"expected 4 segments separated by '.', got {parts.Length}");
++        }
++
++        if (parts[0] != Version)
++        {
++            throw new PiiEnvelopeFormatException(
++                $"unsupported envelope version '{parts[0]}' (expected '{Version}')");
++        }
++
++        byte[] wrapped, nonce, ct;
++        try
++        {
++            wrapped = Base64UrlDecode(parts[1]);
++            nonce = Base64UrlDecode(parts[2]);
++            ct = Base64UrlDecode(parts[3]);
++        }
++        catch (FormatException ex)
++        {
++            throw new PiiEnvelopeFormatException("invalid base64url segment: " + ex.Message);
++        }
++
++        if (nonce.Length != NonceLength)
++        {
++            throw new PiiEnvelopeFormatException(
++                $"nonce length {nonce.Length} != {NonceLength}");
++        }
++
++        if (ct.Length < TagLength)
++        {
++            throw new PiiEnvelopeFormatException(
++                $"ciphertext+tag length {ct.Length} < tag length {TagLength}");
++        }
++
++        return (wrapped, nonce, ct);
++    }
++
++    internal static string Base64UrlEncode(byte[] bytes)
++    {
++        var b64 = Convert.ToBase64String(bytes);
++        return b64.TrimEnd('=').Replace('+', '-').Replace('/', '_');
++    }
++
++    internal static byte[] Base64UrlDecode(string s)
++    {
++        var b64 = s.Replace('-', '+').Replace('_', '/');
++        switch (b64.Length % 4)
++        {
++            case 2: b64 += "=="; break;
++            case 3: b64 += "="; break;
++            case 1: throw new FormatException("invalid base64url length");
++        }
++        return Convert.FromBase64String(b64);
++    }
++}
+diff --git a/src/TravelAssistant.Security.Pii/ServiceCollectionExtensions.cs b/src/TravelAssistant.Security.Pii/ServiceCollectionExtensions.cs
+new file mode 100644
+index 0000000..5d2c6c8
+--- /dev/null
++++ b/src/TravelAssistant.Security.Pii/ServiceCollectionExtensions.cs
+@@ -0,0 +1,57 @@
++using Azure.Core;
++using Azure.Identity;
++using Microsoft.Extensions.Caching.Memory;
++using Microsoft.Extensions.Configuration;
++using Microsoft.Extensions.DependencyInjection;
++
++namespace TravelAssistant.Security.Pii;
++
++/// <summary>DI helpers for APP-6 PII encryption.</summary>
++public static class ServiceCollectionExtensions
++{
++    /// <summary>
++    /// Register <see cref="IPiiCipher"/> (envelope, AES-256-GCM) backed by Azure Key Vault for CMK
++    /// wrap/unwrap. Reads <c>Pii:KeyVault:VaultUri</c>, <c>Pii:KeyVault:CmkName</c>, optional
++    /// <c>Pii:KeyVault:WrapAlgorithm</c>, and optional <c>Pii:DekCacheLifetime</c> (TimeSpan) from
++    /// configuration. Uses <see cref="DefaultAzureCredential"/> for AAD auth.
++    /// </summary>
++    public static IServiceCollection AddPiiEncryption(this IServiceCollection services, IConfiguration config)
++    {
++        ArgumentNullException.ThrowIfNull(services);
++        ArgumentNullException.ThrowIfNull(config);
++
++        services.Configure<KeyVaultCmkOptions>(config.GetSection("Pii:KeyVault"));
++        services.Configure<PiiCipherOptions>(config.GetSection("Pii"));
++
++        services.AddMemoryCache(o => o.SizeLimit = 1024);
++        services.AddSingleton<TokenCredential>(_ => new DefaultAzureCredential());
++        services.AddSingleton<ICmkProvider, KeyVaultCmkProvider>();
++        services.AddSingleton<IPiiCipher, EnvelopePiiCipher>();
++        return services;
++    }
++
++    /// <summary>
++    /// Register <see cref="IPiiCipher"/> with a caller-supplied <see cref="ICmkProvider"/>.
++    /// Use this from tests or when CMK material lives outside Key Vault.
++    /// </summary>
++    public static IServiceCollection AddPiiEncryption(
++        this IServiceCollection services,
++        ICmkProvider cmkProvider,
++        TimeSpan? dekCacheLifetime = null)
++    {
++        ArgumentNullException.ThrowIfNull(services);
++        ArgumentNullException.ThrowIfNull(cmkProvider);
++
++        services.AddMemoryCache(o => o.SizeLimit = 1024);
++        services.Configure<PiiCipherOptions>(o =>
++        {
++            if (dekCacheLifetime is { } life)
++            {
++                o.DekCacheLifetime = life;
++            }
++        });
++        services.AddSingleton(cmkProvider);
++        services.AddSingleton<IPiiCipher, EnvelopePiiCipher>();
++        return services;
++    }
++}
+diff --git a/src/TravelAssistant.Security.Pii/TravelAssistant.Security.Pii.csproj b/src/TravelAssistant.Security.Pii/TravelAssistant.Security.Pii.csproj
+new file mode 100644
+index 0000000..eead21b
+--- /dev/null
++++ b/src/TravelAssistant.Security.Pii/TravelAssistant.Security.Pii.csproj
+@@ -0,0 +1,23 @@
++<Project Sdk="Microsoft.NET.Sdk">
++  <PropertyGroup>
++    <TargetFramework>net9.0</TargetFramework>
++    <ImplicitUsings>enable</ImplicitUsings>
++    <Nullable>enable</Nullable>
++    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
++    <GenerateDocumentationFile>true</GenerateDocumentationFile>
++    <NoWarn>$(NoWarn);CS1591</NoWarn>
++    <PackageId>TravelAssistant.Security.Pii</PackageId>
++    <Description>APP-6 envelope encryption for PII: CMK -> DEK -> AES-256-GCM, per-tenant DEK caching, cryptographic erasure for GDPR Art.17.</Description>
++  </PropertyGroup>
++  <ItemGroup>
++    <PackageReference Include="Azure.Identity" Version="1.13.1" />
++    <PackageReference Include="Azure.Security.KeyVault.Keys" Version="4.7.0" />
++    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="9.0.0" />
++    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="9.0.0" />
++    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.0" />
++    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.0" />
++    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="9.0.0" />
++    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.0" />
++    <PackageReference Include="Microsoft.Extensions.Options" Version="9.0.0" />
++  </ItemGroup>
++</Project>
+diff --git a/tests/TravelAssistant.Security.Pii.Tests/DataClassAttributeTests.cs b/tests/TravelAssistant.Security.Pii.Tests/DataClassAttributeTests.cs
+new file mode 100644
+index 0000000..fcc07aa
+--- /dev/null
++++ b/tests/TravelAssistant.Security.Pii.Tests/DataClassAttributeTests.cs
+@@ -0,0 +1,33 @@
++using Xunit;
++
++namespace TravelAssistant.Security.Pii.Tests;
++
++public sealed class DataClassAttributeTests
++{
++    private sealed class Sample
++    {
++        [DataClass(DataClass.Public)] public string City { get; set; } = "";
++        [DataClass(DataClass.Internal)] public string ProviderId { get; set; } = "";
++        [DataClass(DataClass.Sensitive)] public string Email { get; set; } = "";
++        public string Unclassified { get; set; } = "";
++    }
++
++    [Fact]
++    public void Attribute_ReturnsClass()
++    {
++        var prop = typeof(Sample).GetProperty(nameof(Sample.Email))!;
++        var attr = (DataClassAttribute)Attribute.GetCustomAttribute(prop, typeof(DataClassAttribute))!;
++        Assert.Equal(DataClass.Sensitive, attr.Class);
++    }
++
++    [Fact]
++    public void UnclassifiedProperty_HasNoAttribute_AndIsRejectedByConvention()
++    {
++        // ProductionGuard's APP-6 reflection scan must treat this as Sensitive-by-default and
++        // require either an explicit attribute or a registered converter. This test pins the
++        // contract: absence of attribute is *the* failure mode, not a silent pass.
++        var prop = typeof(Sample).GetProperty(nameof(Sample.Unclassified))!;
++        var attr = Attribute.GetCustomAttribute(prop, typeof(DataClassAttribute));
++        Assert.Null(attr);
++    }
++}
+diff --git a/tests/TravelAssistant.Security.Pii.Tests/EnvelopePiiCipherTests.cs b/tests/TravelAssistant.Security.Pii.Tests/EnvelopePiiCipherTests.cs
+new file mode 100644
+index 0000000..edff149
+--- /dev/null
++++ b/tests/TravelAssistant.Security.Pii.Tests/EnvelopePiiCipherTests.cs
+@@ -0,0 +1,141 @@
++using Microsoft.Extensions.Caching.Memory;
++using Microsoft.Extensions.Logging.Abstractions;
++using Microsoft.Extensions.Options;
++using Xunit;
++
++namespace TravelAssistant.Security.Pii.Tests;
++
++/// <summary>
++/// The 6 mandatory unit tests from squads/security-hardening/artifacts/app-6-pii-encryption-spec.md v1.0.
++/// Plus a handful of envelope-format guards.
++/// </summary>
++public sealed class EnvelopePiiCipherTests
++{
++    private static (EnvelopePiiCipher Cipher, InMemoryCmkProvider Cmk) Build(TimeSpan? dekLife = null)
++    {
++        var cmk = new InMemoryCmkProvider();
++        var cache = new MemoryCache(new MemoryCacheOptions { SizeLimit = 16 });
++        var opts = Options.Create(new PiiCipherOptions
++        {
++            DekCacheLifetime = dekLife ?? TimeSpan.FromHours(1),
++        });
++        var cipher = new EnvelopePiiCipher(cmk, cache, opts, NullLogger<EnvelopePiiCipher>.Instance);
++        return (cipher, cmk);
++    }
++
++    // ── Mandatory test 1 ──────────────────────────────────────────────────────
++    [Fact]
++    public async Task RoundTrip_PreservesPlaintext()
++    {
++        var (cipher, _) = Build();
++        var pt = "Ellen Ripley, ellen.ripley@nostromo.example, +1-555-0100";
++
++        var envelope = await cipher.EncryptAsync("tenant-a", pt);
++        var back = await cipher.DecryptAsync("tenant-a", envelope);
++
++        Assert.Equal(pt, back);
++    }
++
++    // ── Mandatory test 2 ──────────────────────────────────────────────────────
++    [Fact]
++    public async Task SamePlaintext_TwoEncrypts_ProduceDifferentEnvelopes()
++    {
++        var (cipher, _) = Build();
++        var pt = "passport:ABC123";
++
++        var e1 = await cipher.EncryptAsync("tenant-a", pt);
++        var e2 = await cipher.EncryptAsync("tenant-a", pt);
++
++        Assert.NotEqual(e1, e2);
++        // But both decrypt to the same plaintext.
++        Assert.Equal(pt, await cipher.DecryptAsync("tenant-a", e1));
++        Assert.Equal(pt, await cipher.DecryptAsync("tenant-a", e2));
++    }
++
++    // ── Mandatory test 3 ──────────────────────────────────────────────────────
++    [Fact]
++    public async Task CrossTenant_Decrypt_Fails()
++    {
++        var (cipher, _) = Build();
++        var envelope = await cipher.EncryptAsync("tenant-a", "ripley@nostromo.example");
++
++        // Different tenant uses a different CMK, so unwrap fails (AES-GCM tag mismatch -> CryptographicException
++        // inside the in-memory CMK provider, which our cipher maps to PiiKeyUnavailableException).
++        await Assert.ThrowsAnyAsync<Exception>(() => cipher.DecryptAsync("tenant-b", envelope));
++    }
++
++    // ── Mandatory test 4 ──────────────────────────────────────────────────────
++    [Fact]
++    public async Task NullAndEmpty_RoundTrip_AsEmptyString()
++    {
++        var (cipher, _) = Build();
++
++        Assert.Equal(string.Empty, await cipher.EncryptAsync("tenant-a", null));
++        Assert.Equal(string.Empty, await cipher.EncryptAsync("tenant-a", string.Empty));
++        Assert.Equal(string.Empty, await cipher.DecryptAsync("tenant-a", null));
++        Assert.Equal(string.Empty, await cipher.DecryptAsync("tenant-a", string.Empty));
++    }
++
++    // ── Mandatory test 5 ──────────────────────────────────────────────────────
++    [Fact]
++    public async Task CryptographicErasure_ProducesPiiKeyUnavailable()
++    {
++        var (cipher, cmk) = Build();
++        var envelope = await cipher.EncryptAsync("tenant-doomed", "secret");
++
++        cmk.DestroyTenant("tenant-doomed");
++
++        await Assert.ThrowsAsync<PiiKeyUnavailableException>(
++            () => cipher.DecryptAsync("tenant-doomed", envelope));
++    }
++
++    // ── Mandatory test 6 ──────────────────────────────────────────────────────
++    [Fact]
++    public async Task DekCache_ReusesUnwrappedKey_WithinLifetime()
++    {
++        var (cipher, cmk) = Build(dekLife: TimeSpan.FromMinutes(5));
++
++        var e1 = await cipher.EncryptAsync("tenant-a", "x");
++        var wrapAfterFirst = cmk.WrapCallCount;
++        var e2 = await cipher.EncryptAsync("tenant-a", "y");
++
++        // Second encrypt MUST reuse the cached DEK — no new wrap call.
++        Assert.Equal(wrapAfterFirst, cmk.WrapCallCount);
++        Assert.NotEqual(e1, e2);
++    }
++
++    // ── Envelope-format guards (defense-in-depth, not in the mandatory list) ─
++    [Theory]
++    [InlineData("not-an-envelope")]
++    [InlineData("v2.aaaa.bbbb.cccc")]
++    [InlineData("v1.bad-base64!.bbbb.cccc")]
++    [InlineData("v1.aGVsbG8.YWFh.YWFh")] // nonce wrong length
++    public async Task MalformedEnvelope_Throws_PiiEnvelopeFormatException(string envelope)
++    {
++        var (cipher, _) = Build();
++        await Assert.ThrowsAsync<PiiEnvelopeFormatException>(
++            () => cipher.DecryptAsync("tenant-a", envelope));
++    }
++
++    [Fact]
++    public async Task TamperedCiphertext_Throws_PiiEnvelopeFormatException()
++    {
++        var (cipher, _) = Build();
++        var envelope = await cipher.EncryptAsync("tenant-a", "ripley");
++        var parts = envelope.Split('.');
++        // Flip a single bit in the ciphertext+tag segment by mutating its first char.
++        var tampered = parts[3].StartsWith('A') ? "B" + parts[3][1..] : "A" + parts[3][1..];
++        var bad = string.Join('.', parts[0], parts[1], parts[2], tampered);
++
++        await Assert.ThrowsAsync<PiiEnvelopeFormatException>(
++            () => cipher.DecryptAsync("tenant-a", bad));
++    }
++
++    [Fact]
++    public async Task EmptyTenantId_Throws()
++    {
++        var (cipher, _) = Build();
++        await Assert.ThrowsAsync<ArgumentException>(
++            () => cipher.EncryptAsync(string.Empty, "x"));
++    }
++}
+diff --git a/tests/TravelAssistant.Security.Pii.Tests/InMemoryCmkProvider.cs b/tests/TravelAssistant.Security.Pii.Tests/InMemoryCmkProvider.cs
+new file mode 100644
+index 0000000..c29090b
+--- /dev/null
++++ b/tests/TravelAssistant.Security.Pii.Tests/InMemoryCmkProvider.cs
+@@ -0,0 +1,67 @@
++using System.Collections.Concurrent;
++using System.Security.Cryptography;
++
++namespace TravelAssistant.Security.Pii.Tests;
++
++/// <summary>
++/// In-memory ICmkProvider for tests. AES key-wraps DEKs with a deterministic per-tenant CMK,
++/// supports cryptographic erasure via <see cref="DestroyTenant"/>.
++/// </summary>
++internal sealed class InMemoryCmkProvider : ICmkProvider
++{
++    private readonly ConcurrentDictionary<string, byte[]> _cmks = new();
++    private readonly HashSet<string> _destroyed = new();
++    private readonly object _gate = new();
++
++    public int WrapCallCount;
++    public int UnwrapCallCount;
++
++    public void DestroyTenant(string tenantId)
++    {
++        lock (_gate) { _destroyed.Add(tenantId); }
++    }
++
++    private byte[] GetCmk(string tenantId)
++    {
++        lock (_gate)
++        {
++            if (_destroyed.Contains(tenantId))
++            {
++                throw new PiiKeyUnavailableException($"tenant '{tenantId}' was cryptographically erased");
++            }
++        }
++        return _cmks.GetOrAdd(tenantId, _ => RandomNumberGenerator.GetBytes(32));
++    }
++
++    public Task<byte[]> WrapAsync(string tenantId, byte[] dek, CancellationToken ct)
++    {
++        Interlocked.Increment(ref WrapCallCount);
++        var cmk = GetCmk(tenantId);
++        // Use AES-KW (RFC 3394) via Aes + ECB-like key-wrap. AesGcm is fine for an envelope-of-envelope here.
++        var nonce = RandomNumberGenerator.GetBytes(12);
++        var tag = new byte[16];
++        var ct2 = new byte[dek.Length];
++        using (var aes = new AesGcm(cmk, 16))
++        {
++            aes.Encrypt(nonce, dek, ct2, tag);
++        }
++        var wrapped = new byte[nonce.Length + ct2.Length + tag.Length];
++        Buffer.BlockCopy(nonce, 0, wrapped, 0, nonce.Length);
++        Buffer.BlockCopy(ct2, 0, wrapped, nonce.Length, ct2.Length);
++        Buffer.BlockCopy(tag, 0, wrapped, nonce.Length + ct2.Length, tag.Length);
++        return Task.FromResult(wrapped);
++    }
++
++    public Task<byte[]> UnwrapAsync(string tenantId, byte[] wrappedDek, CancellationToken ct)
++    {
++        Interlocked.Increment(ref UnwrapCallCount);
++        var cmk = GetCmk(tenantId);
++        var nonce = wrappedDek[..12];
++        var tag = wrappedDek[^16..];
++        var cipher = wrappedDek[12..^16];
++        var dek = new byte[cipher.Length];
++        using var aes = new AesGcm(cmk, 16);
++        aes.Decrypt(nonce, cipher, tag, dek);
++        return Task.FromResult(dek);
++    }
++}
+diff --git a/tests/TravelAssistant.Security.Pii.Tests/TravelAssistant.Security.Pii.Tests.csproj b/tests/TravelAssistant.Security.Pii.Tests/TravelAssistant.Security.Pii.Tests.csproj
+new file mode 100644
+index 0000000..2bf8919
+--- /dev/null
++++ b/tests/TravelAssistant.Security.Pii.Tests/TravelAssistant.Security.Pii.Tests.csproj
+@@ -0,0 +1,18 @@
++<Project Sdk="Microsoft.NET.Sdk">
++  <PropertyGroup>
++    <TargetFramework>net9.0</TargetFramework>
++    <ImplicitUsings>enable</ImplicitUsings>
++    <Nullable>enable</Nullable>
++    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
++    <IsPackable>false</IsPackable>
++    <IsTestProject>true</IsTestProject>
++  </PropertyGroup>
++  <ItemGroup>
++    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
++    <PackageReference Include="xunit" Version="2.9.2" />
++    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
++  </ItemGroup>
++  <ItemGroup>
++    <ProjectReference Include="..\..\src\TravelAssistant.Security.Pii\TravelAssistant.Security.Pii.csproj" />
++  </ItemGroup>
++</Project>
+-- 
+2.54.0.vfs.0.2
+

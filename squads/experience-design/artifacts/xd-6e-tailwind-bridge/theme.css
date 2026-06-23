@@ -1,0 +1,207 @@
+/* ============================================================================
+   XD-6e: Tailwind 4 Token Bridge
+   ---------------------------------------------------------------------------
+   Source of truth: docs/design/tokens.json (XD-3, design-tokens.org schema)
+   Consumer: apps/web (Next.js 16.2.6 / React 19.2.4 / Tailwind 4)
+   Install path: apps/web/app/theme.css  (imported from app/globals.css)
+   Replaces: XD-6b (Blazor _AppTheme.razor — deferred, see ADR-0002 status)
+
+   Tailwind 4 native @theme block — every token below becomes a utility:
+     --color-bg-canvas      →  bg-bg-canvas, text-bg-canvas, border-bg-canvas
+     --spacing-md           →  p-md, m-md, gap-md
+     --font-size-body       →  text-body
+     --radius-card          →  rounded-card
+     --z-modal              →  z-modal
+
+   DO NOT hand-edit token values here — round-trip through tokens.json so
+   the Blazor bridge (XD-6b, deferred) and Storybook/Figma exporters stay
+   in sync. This file is generated/maintained by XD.
+
+   WCAG 2.2 AA contrast verified on every fg/bg pair (XD-4, merge-blocking).
+   ============================================================================ */
+
+@import "tailwindcss";
+
+@theme {
+  /* ---- Color: surface ------------------------------------------------- */
+  --color-bg-canvas:        #FFFFFF;
+  --color-bg-surface:       #FAFAF9;
+  --color-bg-elevated:      #FFFFFF;
+  --color-bg-overlay:       rgba(15, 23, 42, 0.55);
+
+  /* ---- Color: foreground (AA on canvas/surface) ----------------------- */
+  --color-fg-primary:       #0F172A;   /* 16.9:1 on canvas */
+  --color-fg-secondary:     #475569;   /* 7.4:1  on canvas */
+  --color-fg-muted:         #64748B;   /* 4.8:1  on canvas — AA min */
+  --color-fg-inverse:       #FFFFFF;
+
+  /* ---- Color: brand --------------------------------------------------- */
+  --color-brand-primary:    #2563EB;
+  --color-brand-primary-hover: #1D4ED8;
+  --color-brand-accent:     #0EA5E9;
+
+  /* ---- Color: semantic state (AA verified) ---------------------------- */
+  --color-state-success-fg: #14532D;
+  --color-state-success-bg: #DCFCE7;
+  --color-state-warning-fg: #78350F;
+  --color-state-warning-bg: #FEF3C7;
+  --color-state-danger-fg:  #7F1D1D;
+  --color-state-danger-bg:  #FEE2E2;
+  --color-state-info-fg:    #1E3A8A;
+  --color-state-info-bg:    #DBEAFE;
+
+  /* ---- Color: pending-patch state (XD-6c regression guard) ----------- */
+  /* 4.5:1 contrast — NEVER color-only. Always pair with text/glyph marker. */
+  --color-state-pending-fg: #5B21B6;
+  --color-state-pending-bg: #EDE9FE;
+
+  /* ---- Color: border / divider --------------------------------------- */
+  --color-border-subtle:    #E2E8F0;
+  --color-border-strong:    #94A3B8;
+  --color-border-focus:     #2563EB;   /* matches brand-primary, ≥3:1 vs canvas */
+
+  /* ---- Typography ---------------------------------------------------- */
+  --font-family-sans:       "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-family-mono:       "JetBrains Mono", ui-monospace, monospace;
+
+  --font-size-caption:      0.75rem;   /* 12px */
+  --font-size-body-sm:      0.875rem;  /* 14px */
+  --font-size-body:         1rem;      /* 16px — never smaller for body */
+  --font-size-h4:           1.125rem;  /* 18px */
+  --font-size-h3:           1.25rem;   /* 20px */
+  --font-size-h2:           1.5rem;    /* 24px */
+  --font-size-h1:           2rem;      /* 32px */
+
+  --line-height-tight:      1.25;
+  --line-height-body:       1.55;      /* a11y: body ≥1.5 */
+  --line-height-loose:      1.75;
+
+  --font-weight-regular:    400;
+  --font-weight-medium:     500;
+  --font-weight-semibold:   600;
+  --font-weight-bold:       700;
+
+  /* ---- Spacing scale (4px base) -------------------------------------- */
+  --spacing-3xs:            0.125rem;  /* 2px  */
+  --spacing-2xs:            0.25rem;   /* 4px  */
+  --spacing-xs:             0.5rem;    /* 8px  */
+  --spacing-sm:             0.75rem;   /* 12px */
+  --spacing-md:             1rem;      /* 16px */
+  --spacing-lg:             1.5rem;    /* 24px */
+  --spacing-xl:             2rem;      /* 32px */
+  --spacing-2xl:            3rem;      /* 48px */
+  --spacing-3xl:            4rem;      /* 64px */
+
+  /* ---- Radius -------------------------------------------------------- */
+  --radius-xs:              0.125rem;
+  --radius-sm:              0.25rem;
+  --radius-md:              0.5rem;
+  --radius-card:            0.75rem;
+  --radius-modal:           1rem;
+  --radius-pill:            9999px;
+
+  /* ---- Shadow / elevation -------------------------------------------- */
+  --shadow-low:    0 1px 2px 0 rgba(15, 23, 42, 0.05);
+  --shadow-med:    0 4px 8px -2px rgba(15, 23, 42, 0.08), 0 2px 4px -2px rgba(15, 23, 42, 0.04);
+  --shadow-high:   0 12px 24px -6px rgba(15, 23, 42, 0.12), 0 4px 8px -4px rgba(15, 23, 42, 0.06);
+  --shadow-modal:  0 24px 48px -12px rgba(15, 23, 42, 0.25);
+
+  /* ---- Motion (respects prefers-reduced-motion) ---------------------- */
+  --duration-instant:       0ms;
+  --duration-fast:          120ms;
+  --duration-base:          200ms;
+  --duration-slow:          320ms;
+
+  --easing-standard:        cubic-bezier(0.2, 0, 0, 1);
+  --easing-emphasized:      cubic-bezier(0.3, 0, 0, 1);
+
+  /* ---- Z-index (modal > popover > snackbar > sticky > content) ------- */
+  --z-base:                 0;
+  --z-sticky:               100;
+  --z-snackbar:             400;
+  --z-popover:              600;
+  --z-modal:                800;
+  --z-toast:                900;
+
+  /* ---- Focus ring (a11y: ≥2px solid, ≥3:1 contrast on adjacent) ----- */
+  --focus-ring-width:       2px;
+  --focus-ring-offset:      2px;
+  --focus-ring-color:       var(--color-border-focus);
+
+  /* ---- Layout: split-canvas (XD-2) ----------------------------------- */
+  --layout-chat-width-desktop:      40%;
+  --layout-itinerary-width-desktop: 60%;
+  --layout-breakpoint-mobile:       640px;
+  --layout-breakpoint-tablet:       1024px;
+}
+
+/* ============================================================================
+   Dark theme — same token names, different values.
+   Activated via class="dark" on <html> per Tailwind 4 convention.
+   Every fg/bg pair re-verified for WCAG 2.2 AA contrast in dark mode.
+   ============================================================================ */
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+.dark {
+  --color-bg-canvas:        #0B1220;
+  --color-bg-surface:       #111827;
+  --color-bg-elevated:      #1F2937;
+  --color-bg-overlay:       rgba(0, 0, 0, 0.70);
+
+  --color-fg-primary:       #F1F5F9;   /* 15.2:1 on canvas */
+  --color-fg-secondary:     #CBD5E1;   /* 9.8:1  on canvas */
+  --color-fg-muted:         #94A3B8;   /* 5.4:1  on canvas — AA */
+  --color-fg-inverse:       #0F172A;
+
+  --color-brand-primary:    #60A5FA;
+  --color-brand-primary-hover: #93C5FD;
+  --color-brand-accent:     #38BDF8;
+
+  --color-state-success-fg: #BBF7D0;
+  --color-state-success-bg: #14532D;
+  --color-state-warning-fg: #FDE68A;
+  --color-state-warning-bg: #78350F;
+  --color-state-danger-fg:  #FECACA;
+  --color-state-danger-bg:  #7F1D1D;
+  --color-state-info-fg:    #BFDBFE;
+  --color-state-info-bg:    #1E3A8A;
+
+  --color-state-pending-fg: #DDD6FE;
+  --color-state-pending-bg: #4C1D95;
+
+  --color-border-subtle:    #334155;
+  --color-border-strong:    #64748B;
+  --color-border-focus:     #60A5FA;
+
+  --shadow-low:    0 1px 2px 0 rgba(0, 0, 0, 0.40);
+  --shadow-med:    0 4px 8px -2px rgba(0, 0, 0, 0.50), 0 2px 4px -2px rgba(0, 0, 0, 0.35);
+  --shadow-high:   0 12px 24px -6px rgba(0, 0, 0, 0.55), 0 4px 8px -4px rgba(0, 0, 0, 0.40);
+  --shadow-modal:  0 24px 48px -12px rgba(0, 0, 0, 0.70);
+}
+
+/* ============================================================================
+   Reduced-motion: collapse all durations to instant.
+   Hard requirement from XD-4 a11y baseline.
+   ============================================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  :root, .dark {
+    --duration-fast:  0ms;
+    --duration-base:  0ms;
+    --duration-slow:  0ms;
+  }
+}
+
+/* ============================================================================
+   Global focus-visible: applies the token-defined ring to every focusable.
+   Do NOT override per-component without an XD ADR — the ring is the keyboard
+   user's only positional signal.
+   ============================================================================ */
+
+@layer base {
+  :where(:focus-visible) {
+    outline: var(--focus-ring-width) solid var(--focus-ring-color);
+    outline-offset: var(--focus-ring-offset);
+  }
+}

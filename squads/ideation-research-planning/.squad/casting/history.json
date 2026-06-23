@@ -1,4 +1,26 @@
 {
   "universe_usage_history": [],
-  "assignment_cast_snapshots": {}
+  "assignment_cast_snapshots": {
+    "2026-06-23T20:32:18+03:00": {
+      "assignment_id": "ideation-research-planning-2026-06-23",
+      "trigger": "Copilot ran 'hire the team needed here' — completion pass on partial squad",
+      "outcome": "Added Fact Checker (always-on built-in), fleshed out 6 domain charters, seeded history.md for all 10 agents, updated team.md + routing.md, populated empty registry",
+      "universe": null,
+      "naming_convention": "PascalCase descriptive names for domain agents; canonical names for built-ins (Scribe, Ralph, Rai, Fact Checker)",
+      "agents_added_this_assignment": [
+        "Fact Checker"
+      ],
+      "agents_already_present": [
+        "ResearchAgent",
+        "CompetitiveAnalysisAgent",
+        "ProductManagerAgent",
+        "TechnicalArchitectAgent",
+        "PlanningAgent",
+        "ScribeAgent",
+        "Scribe",
+        "Ralph",
+        "Rai"
+      ]
+    }
+  }
 }

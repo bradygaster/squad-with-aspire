@@ -1,0 +1,84 @@
+name: Deploy to Production
+
+# REL-5: Production deploys are GATED behind the `prod` GitHub Environment.
+# Trigger: a GitHub Release is published (created by release-please in
+# release.yml when its release PR is merged), OR a manual workflow_dispatch
+# with an explicit tag.
+#
+# The `environment: prod` reference forces required-reviewers approval
+# (configure in repo Settings → Environments → prod → Required reviewers).
+# Until a reviewer approves the run, no Azure call is made.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Git tag to deploy (e.g. v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+env:
+  AZURE_ENV_NAME: ${{ vars.AZURE_ENV_NAME_PROD || 'prod' }}
+  AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'westeurope' }}
+  DEPLOY_REF: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  approve-and-deploy:
+    name: azd deploy → prod (gated)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: prod                       # <-- required-reviewers gate lives here
+      url: ${{ steps.deploy.outputs.endpoint_url }}
+    steps:
+      - name: Check out tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEPLOY_REF }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Install azd
+        uses: Azure/setup-azd@v2
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID_PROD || secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: azd auth login (federated)
+        run: |
+          azd auth login \
+            --client-id "${{ secrets.AZURE_CLIENT_ID }}" \
+            --federated-credential-provider github \
+            --tenant-id "${{ secrets.AZURE_TENANT_ID }}"
+
+      - name: azd deploy
+        id: deploy
+        run: |
+          set -e
+          azd env select "$AZURE_ENV_NAME" 2>/dev/null || \
+            azd env new "$AZURE_ENV_NAME" --location "$AZURE_LOCATION" \
+              --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID_PROD || secrets.AZURE_SUBSCRIPTION_ID }}"
+          azd deploy --no-prompt
+          URL=$(azd env get-values | grep -E '^SERVICE_API_URI|^API_URL' | head -1 | cut -d'=' -f2- | tr -d '"' || true)
+          echo "endpoint_url=${URL:-https://prod.travel-assistant.invalid}" >> "$GITHUB_OUTPUT"
+
+      - name: Annotate release with deploy info
+        run: |
+          echo "::notice title=Production deploy::Deployed ${DEPLOY_REF} to $AZURE_ENV_NAME"

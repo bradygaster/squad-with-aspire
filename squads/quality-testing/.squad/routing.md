@@ -6,12 +6,17 @@ How to decide who handles what.
 
 | Work Type | Route To | Examples |
 |-----------|----------|----------|
-| {domain 1} | {Name} | {example tasks} |
-| {domain 2} | {Name} | {example tasks} |
-| {domain 3} | {Name} | {example tasks} |
-| Code review | {Name} | Review PRs, check quality, suggest improvements |
-| Testing | {Name} | Write tests, find edge cases, verify fixes |
-| Scope & priorities | {Name} | What to build next, trade-offs, decisions |
+| Testing strategy & architecture | TestArchitectAgent | Test plans, test pyramid balance, quality gate definitions, release readiness |
+| Test triage & prioritization | TestArchitectAgent | Decide which test discipline owns a piece of work, what to test first |
+| Unit testing | UnitTestingAgent | Isolated logic, business rules, edge cases, failure paths, fast feedback |
+| Integration testing | IntegrationTestingAgent | API contracts, service-to-service flows, database interactions, cross-boundary behavior |
+| End-to-end UI testing | PlaywrightTestingAgent | Browser automation, critical user journeys, visual flows, usability validation |
+| Acceptance testing | UserAcceptanceTestingAgent | Translate requirements into scenarios, validate user-facing outcomes, BDD-style cases |
+| Performance & load testing | PerformanceTestingAgent | Load tests, scalability checks, latency budgets, resilience under stress, performance regressions |
+| Regression testing | RegressionTestingAgent | Regression suites, flaky-test eradication, smoke/critical/full tiers, release-readiness checks |
+| Cross-discipline test review | TestArchitectAgent + relevant specialist | Architectural review of test approaches, resolving overlap, shared test infrastructure |
+| Quality gates & release readiness | TestArchitectAgent | Approving release based on test coverage across disciplines |
+| Scope & priorities | TestArchitectAgent | What to test next, trade-offs, quality investment decisions |
 | Session logging | Scribe | Automatic — never needs routing |
 | RAI review | Rai | Content safety, bias checks, credential detection, ethical review |
 

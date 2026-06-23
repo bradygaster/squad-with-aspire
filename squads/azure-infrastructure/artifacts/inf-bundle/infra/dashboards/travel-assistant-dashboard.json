@@ -1,0 +1,82 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "dashboardName": { "type": "string", "defaultValue": "travel-assistant" },
+    "location": { "type": "string", "defaultValue": "[resourceGroup().location]" },
+    "appInsightsId": { "type": "string" },
+    "logAnalyticsId": { "type": "string" }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Portal/dashboards",
+      "apiVersion": "2020-09-01-preview",
+      "name": "[parameters('dashboardName')]",
+      "location": "[parameters('location')]",
+      "tags": { "hidden-title": "Travel Assistant — Ops" },
+      "properties": {
+        "lenses": [
+          {
+            "order": 0,
+            "parts": [
+              {
+                "position": { "x": 0, "y": 0, "rowSpan": 4, "colSpan": 6 },
+                "metadata": {
+                  "type": "Extension/AppInsightsExtension/PartType/CuratedBladeFailuresPinnedPart",
+                  "inputs": [ { "name": "ComponentId", "value": "[parameters('appInsightsId')]" } ]
+                }
+              },
+              {
+                "position": { "x": 6, "y": 0, "rowSpan": 4, "colSpan": 6 },
+                "metadata": {
+                  "type": "Extension/AppInsightsExtension/PartType/CuratedBladePerformancePinnedPart",
+                  "inputs": [ { "name": "ComponentId", "value": "[parameters('appInsightsId')]" } ]
+                }
+              },
+              {
+                "position": { "x": 0, "y": 4, "rowSpan": 4, "colSpan": 6 },
+                "metadata": {
+                  "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+                  "settings": {
+                    "content": {
+                      "Query": "customMetrics | where name == 'llm.tokens.in' or name == 'llm.tokens.out' | summarize tokens=sum(value) by name, bin(timestamp, 5m) | render timechart",
+                      "ControlType": "AnalyticsGrid",
+                      "Dimensions": { "xAxis": { "name": "timestamp", "type": "datetime" }, "yAxis": [{ "name": "tokens", "type": "long" }], "splitBy": [{ "name": "name", "type": "string" }] }
+                    }
+                  },
+                  "inputs": [ { "name": "ComponentId", "value": "[parameters('logAnalyticsId')]" } ]
+                }
+              },
+              {
+                "position": { "x": 6, "y": 4, "rowSpan": 4, "colSpan": 6 },
+                "metadata": {
+                  "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+                  "settings": {
+                    "content": {
+                      "Query": "customMetrics | where name == 'llm.cost.usd' | summarize cost_usd=sum(value) by bin(timestamp, 1h), tostring(customDimensions['env']) | render columnchart",
+                      "ControlType": "AnalyticsGrid"
+                    }
+                  },
+                  "inputs": [ { "name": "ComponentId", "value": "[parameters('logAnalyticsId')]" } ]
+                }
+              },
+              {
+                "position": { "x": 0, "y": 8, "rowSpan": 3, "colSpan": 12 },
+                "metadata": {
+                  "type": "Extension/Microsoft_OperationsManagementSuite_Workspace/PartType/LogsDashboardPart",
+                  "settings": {
+                    "content": {
+                      "Query": "customMetrics | where name == 'chip.cache.hit' | summarize hits=sum(value) by bin(timestamp, 5m), tostring(customDimensions['chip_intent']) | render timechart",
+                      "ControlType": "AnalyticsGrid"
+                    }
+                  },
+                  "inputs": [ { "name": "ComponentId", "value": "[parameters('logAnalyticsId')]" } ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

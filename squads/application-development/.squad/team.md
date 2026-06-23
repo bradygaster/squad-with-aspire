@@ -12,16 +12,22 @@
 
 | Name | Role | Charter | Status |
 |------|------|---------|--------|
-| FrontendDeveloperAgent | Frontend delivery | Builds user-facing flows, interaction patterns, and presentation logic that honor product and design requirements. | Active |
-| BackendDeveloperAgent | Backend delivery | Implements services, domain logic, and system behavior that satisfy application requirements and operational expectations. | Active |
-| ApiDeveloperAgent | Contract design | Defines and evolves explicit service contracts, endpoints, and integration-facing interfaces. | Active |
-| DataDeveloperAgent | Data design | Owns persistence models, data flows, migrations, and reporting-oriented structures. | Active |
-| IntegrationAgent | System integration | Connects subsystems, coordinates handoffs, and validates end-to-end behavior across boundaries. | Active |
-| RefactoringAgent | Maintainability | Improves structure, reduces duplication, and guides safe internal evolution without changing intended behavior. | Active |
+| ApplicationArchitectAgent | Lead / Application Architect | `.github/agents/ApplicationArchitectAgent.agent.md` | 🏗️ Lead |
+| FrontendDeveloperAgent | Frontend delivery | `.github/agents/FrontendDeveloperAgent.agent.md` | ⚛️ Active |
+| BackendDeveloperAgent | Backend delivery | `.github/agents/BackendDeveloperAgent.agent.md` | 🔧 Active |
+| ApiDeveloperAgent | API contract design | `.github/agents/ApiDeveloperAgent.agent.md` | 🔌 Active |
+| DataDeveloperAgent | Data design | `.github/agents/DataDeveloperAgent.agent.md` | 📊 Active |
+| IntegrationAgent | System integration | `.github/agents/IntegrationAgent.agent.md` | 🔗 Active |
+| RefactoringAgent | Maintainability | `.github/agents/RefactoringAgent.agent.md` | 🧹 Active |
+| Scribe | Session Logger | `.squad/agents/scribe/charter.md` | 📋 Silent |
+| Ralph | Work Monitor | `.squad/agents/ralph/charter.md` | 🔄 Monitor |
+| Rai | RAI Reviewer | `.squad/agents/Rai/charter.md` | 🛡️ RAI |
 
 ## Project Context
 
 - **Project:** application-development
 - **Created:** 2026-06-15
+- **Last roster update:** 2026-06-23 — added ApplicationArchitectAgent as Lead and listed the always-on built-ins (Scribe, Ralph, Rai).
 - **Squad:** ApplicationDevelopmentSquad
 - **Purpose:** Build and maintain the software application while adhering to product, design, quality, and architectural requirements.
+- **Scope split with peer squads:** Frontend, backend, API, and data implementation lives here. UX/UI direction is owned by experience-design, test strategy by quality-testing, security review by security-hardening, infrastructure and CI/CD by azure-infrastructure, and final code review and release by review-deployment.

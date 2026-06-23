@@ -1,0 +1,650 @@
+From 661b3330b0ec34a45485459b7291021e8d92f513 Mon Sep 17 00:00:00 2001
+From: Copilot <223556219+Copilot@users.noreply.github.com>
+Date: Tue, 23 Jun 2026 18:39:05 +0300
+Subject: [PATCH] ci: REL-1..REL-5 pipelines, CODEOWNERS, PR template, rollback
+ runbook
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+REL-1: .github/workflows/ci.yml — build, test, lint (dotnet format), gitleaks secret scan, CodeQL, single 'CI Gate' required check.
+REL-2: .github/workflows/deploy-staging.yml — OIDC azd deploy on push to main, Playwright smoke, auto-rollback on smoke failure via Container Apps revision pinning.
+REL-3: .github/CODEOWNERS routes booking/payments/auth paths and PR template enforces tests + security checklist + reviewer routing.
+REL-4: docs/feature-flags.md — Azure App Configuration conventions, required day-1 flags incl. ops.deploy.killSwitch.
+REL-5: docs/runbooks/rollback.md — < 5 min rollback procedure with automatic, one-command, manual, and kill-switch options.
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
+---
+ .github/CODEOWNERS                   |  48 ++++++--
+ .github/pull_request_template.md     |  50 +++++---
+ .github/workflows/ci.yml             | 138 ++++++++++++++++++++++
+ .github/workflows/deploy-staging.yml | 169 +++++++++++++++++++++++++++
+ docs/feature-flags.md                |  77 ++++++++++++
+ docs/runbooks/rollback.md            |  89 ++++++++++++++
+ 6 files changed, 545 insertions(+), 26 deletions(-)
+ create mode 100644 .github/workflows/ci.yml
+ create mode 100644 .github/workflows/deploy-staging.yml
+ create mode 100644 docs/feature-flags.md
+ create mode 100644 docs/runbooks/rollback.md
+
+diff --git a/.github/CODEOWNERS b/.github/CODEOWNERS
+index d43fb1c..5c23a2c 100644
+--- a/.github/CODEOWNERS
++++ b/.github/CODEOWNERS
+@@ -1,15 +1,41 @@
+-# CODEOWNERS file mapping paths to squad owners
+-# All paths map to @tamirdresher (virtual squad, single human user)
+-# The labels below document the intended ownership by role:
++# CODEOWNERS — REL-3
++# Routes PRs to the right squads. Path-specific reviewers are required.
++# All paths fall back to @tamirdresher (project owner / EMU single-user).
+ 
+-# DevOps Engineer → Gantz
+-infra/* @tamirdresher
++# --- Default ---
++*                                @tamirdresher
+ 
+-# Backend Developer → Peres
+-src/* @tamirdresher
++# --- Infra (azure-infrastructure-squad: Reyes, Vasquez, Hudson, Drake) ---
++infra/**                         @tamirdresher
++.github/workflows/deploy-*.yml   @tamirdresher
+ 
+-# Frontend Developer → Lapid
+-web/* @tamirdresher
++# --- CI / release (review-deployment-squad: Hicks, Vasquez, Drake) ---
++.github/workflows/**             @tamirdresher
++.github/CODEOWNERS               @tamirdresher
++.github/pull_request_template.md @tamirdresher
++docs/runbooks/**                 @tamirdresher
++docs/feature-flags.md            @tamirdresher
+ 
+-# Squad meta files
+-.squad/* @tamirdresher
++# --- API / backend (application-development-squad) ---
++src/**                           @tamirdresher
++apps/**                          @tamirdresher
++
++# --- Booking-logic paths require security review ---
++# Any change under these paths must also be reviewed by security-hardening-squad.
++src/**/Booking/**                @tamirdresher
++src/**/Payments/**               @tamirdresher
++src/**/Auth/**                   @tamirdresher
++
++# --- Frontend / web (experience-design-squad + application-development-squad) ---
++web/**                           @tamirdresher
++apps/web/**                      @tamirdresher
++
++# --- Tests (quality-testing-squad) ---
++tests/**                         @tamirdresher
++
++# --- Docs & security policy (security-hardening-squad for /docs/security) ---
++docs/security/**                 @tamirdresher
++
++# --- Squad meta files (coordinator-owned) ---
++.squad/**                        @tamirdresher
++.copilot/**                      @tamirdresher
+diff --git a/.github/pull_request_template.md b/.github/pull_request_template.md
+index df8e29d..d126455 100644
+--- a/.github/pull_request_template.md
++++ b/.github/pull_request_template.md
+@@ -1,24 +1,44 @@
++# Pull Request
++
+ ## Summary
+-<!-- Briefly describe the changes in this PR -->
++<!-- One paragraph: what changes and why. -->
+ 
+-## Linked Issue
+-Closes #<!-- Issue number -->
++## Linked items
++- Closes #
++- Design / spec link:
++- Decision (`.squad/decisions.md` entry, if applicable):
+ 
+ ## Changes
+-<!-- Describe the technical changes made -->
+-- 
+-- 
+-- 
++-
++-
++-
+ 
+-## Testing
+-<!-- How were these changes tested? -->
++## Testing (REL-3 — required)
+ - [ ] Unit tests added/updated
+-- [ ] Integration tests added/updated
+-- [ ] Manual testing performed
++- [ ] Integration tests added/updated (REQUIRED for any change under `src/**/Booking/**`, `src/**/Payments/**`, `src/**/Auth/**`)
++- [ ] LLM eval added/updated (REQUIRED if prompts, model selection, or planner logic changed)
++- [ ] Manual smoke against local Aspire AppHost
++- [ ] `dotnet test` green locally
++
++## Security checklist (REL-3 — required)
++- [ ] No secrets, tokens, or connection strings added to source / config / logs
++- [ ] All new external HTTP calls use the typed gateway (no raw `HttpClient` to user-supplied URLs → SSRF)
++- [ ] User input is validated before reaching providers or the LLM
++- [ ] PII (passport, payment hint, traveler info) is NOT placed in LLM prompts, logs, or telemetry
++- [ ] If booking / payments / auth touched: security-hardening-squad reviewer is requested
++- [ ] If a new feature flag is introduced: documented in `docs/feature-flags.md` with sunset date
++
++## Reviewer routing (auto via CODEOWNERS)
++- [ ] Touches `src/**/Booking|Payments|Auth/**` → security-hardening-squad must approve
++- [ ] Touches `infra/**` → azure-infrastructure-squad must approve
++- [ ] Touches `.github/workflows/**` → review-deployment-squad must approve
++
++## Rollout
++- [ ] Backward-compatible (no breaking API or DB changes), OR
++- [ ] Behind a feature flag (`docs/feature-flags.md`) defaulted off in prod
++- [ ] Rollback plan: revert PR + revision pin (`docs/runbooks/rollback.md`)
+ 
+ ## Checklist
+-- [ ] Code follows project style guidelines
++- [ ] Code follows project style (`dotnet format` passes)
+ - [ ] Documentation updated if applicable
+-- [ ] No breaking changes
+-- [ ] Related issue(s) linked
+-- [ ] Tested locally
++- [ ] No `TODO` / `FIXME` left without a linked issue
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+new file mode 100644
+index 0000000..dcf0fe5
+--- /dev/null
++++ b/.github/workflows/ci.yml
+@@ -0,0 +1,138 @@
++name: CI
++
++# REL-1: Build, test, lint, secret scan on every PR + main push.
++# This workflow is the required check that gates merges to main.
++
++on:
++  pull_request:
++    branches: [main]
++  push:
++    branches: [main]
++  workflow_dispatch:
++
++permissions:
++  contents: read
++  pull-requests: read
++  security-events: write
++
++concurrency:
++  group: ci-${{ github.workflow }}-${{ github.ref }}
++  cancel-in-progress: true
++
++env:
++  DOTNET_NOLOGO: true
++  DOTNET_CLI_TELEMETRY_OPTOUT: true
++  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
++
++jobs:
++  build-test:
++    name: build + test (.NET)
++    runs-on: ubuntu-latest
++    timeout-minutes: 20
++    steps:
++      - uses: actions/checkout@v4
++        with:
++          fetch-depth: 0
++
++      - name: Setup .NET
++        uses: actions/setup-dotnet@v4
++        with:
++          dotnet-version: |
++            9.0.x
++
++      - name: Cache NuGet packages
++        uses: actions/cache@v4
++        with:
++          path: ~/.nuget/packages
++          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/*.slnx', '**/Directory.Packages.props') }}
++          restore-keys: |
++            ${{ runner.os }}-nuget-
++
++      - name: Restore
++        run: dotnet restore TravelAssistant.slnx
++
++      - name: Build
++        run: dotnet build TravelAssistant.slnx --configuration Release --no-restore /warnaserror
++
++      - name: Test
++        run: |
++          dotnet test TravelAssistant.slnx \
++            --configuration Release \
++            --no-build \
++            --logger "trx;LogFileName=test-results.trx" \
++            --logger "GitHubActions;summary.includePassedTests=false" \
++            --collect:"XPlat Code Coverage" \
++            --results-directory ./TestResults
++
++      - name: Upload test results
++        if: always()
++        uses: actions/upload-artifact@v4
++        with:
++          name: test-results
++          path: TestResults/**/*
++          retention-days: 7
++
++  lint-format:
++    name: lint + format
++    runs-on: ubuntu-latest
++    timeout-minutes: 10
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-dotnet@v4
++        with:
++          dotnet-version: 9.0.x
++      - name: Verify dotnet format
++        run: dotnet format TravelAssistant.slnx --verify-no-changes --severity warn
++
++  secret-scan:
++    name: secret scan (gitleaks)
++    runs-on: ubuntu-latest
++    timeout-minutes: 5
++    steps:
++      - uses: actions/checkout@v4
++        with:
++          fetch-depth: 0
++      - name: Run gitleaks
++        uses: gitleaks/gitleaks-action@v2
++        env:
++          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
++          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: true
++          GITLEAKS_ENABLE_SUMMARY: true
++
++  codeql:
++    name: CodeQL (C#)
++    runs-on: ubuntu-latest
++    timeout-minutes: 20
++    permissions:
++      security-events: write
++      contents: read
++      actions: read
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-dotnet@v4
++        with:
++          dotnet-version: 9.0.x
++      - uses: github/codeql-action/init@v3
++        with:
++          languages: csharp
++          build-mode: autobuild
++      - uses: github/codeql-action/analyze@v3
++        with:
++          category: "/language:csharp"
++
++  ci-gate:
++    name: CI Gate (required)
++    needs: [build-test, lint-format, secret-scan, codeql]
++    runs-on: ubuntu-latest
++    if: always()
++    steps:
++      - name: Fail if any required job failed
++        run: |
++          if [[ "${{ needs.build-test.result }}" != "success" \
++             || "${{ needs.lint-format.result }}" != "success" \
++             || "${{ needs.secret-scan.result }}" != "success" \
++             || "${{ needs.codeql.result }}" != "success" ]]; then
++            echo "One or more required CI jobs failed."
++            exit 1
++          fi
++          echo "All required CI jobs passed."
+diff --git a/.github/workflows/deploy-staging.yml b/.github/workflows/deploy-staging.yml
+new file mode 100644
+index 0000000..7756af8
+--- /dev/null
++++ b/.github/workflows/deploy-staging.yml
+@@ -0,0 +1,169 @@
++name: Deploy to Staging
++
++# REL-2: On merge to main, deploy via `azd` to the staging environment,
++# then run Playwright smoke tests. On smoke failure, roll back the
++# Container Apps revision (REL-5).
++#
++# Prerequisites (configured by azure-infrastructure-squad):
++#   - GitHub OIDC federation to Azure (no client secrets)
++#   - Repo secrets: AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
++#   - Repo variables: AZURE_ENV_NAME=staging, AZURE_LOCATION
++#   - azd template wired to the Aspire AppHost
++
++on:
++  push:
++    branches: [main]
++  workflow_dispatch:
++    inputs:
++      skip_smoke:
++        description: "Skip Playwright smoke tests"
++        type: boolean
++        default: false
++
++permissions:
++  id-token: write
++  contents: read
++
++concurrency:
++  group: deploy-staging
++  cancel-in-progress: false
++
++env:
++  AZURE_ENV_NAME: ${{ vars.AZURE_ENV_NAME || 'staging' }}
++  AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'westeurope' }}
++
++jobs:
++  deploy:
++    name: azd deploy → staging
++    runs-on: ubuntu-latest
++    timeout-minutes: 30
++    environment:
++      name: staging
++      url: ${{ steps.deploy.outputs.endpoint_url }}
++    outputs:
++      previous_revision: ${{ steps.snapshot.outputs.previous_revision }}
++      endpoint_url: ${{ steps.deploy.outputs.endpoint_url }}
++    steps:
++      - uses: actions/checkout@v4
++
++      - name: Setup .NET
++        uses: actions/setup-dotnet@v4
++        with:
++          dotnet-version: 9.0.x
++
++      - name: Install azd
++        uses: Azure/setup-azd@v2
++
++      - name: Azure login (OIDC)
++        uses: azure/login@v2
++        with:
++          client-id: ${{ secrets.AZURE_CLIENT_ID }}
++          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
++          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
++
++      - name: azd auth login (federated)
++        run: |
++          azd auth login \
++            --client-id "${{ secrets.AZURE_CLIENT_ID }}" \
++            --federated-credential-provider github \
++            --tenant-id "${{ secrets.AZURE_TENANT_ID }}"
++
++      - name: Snapshot current revision (for rollback)
++        id: snapshot
++        run: |
++          set -e
++          RG="rg-travel-assistant-${AZURE_ENV_NAME}"
++          APP_NAME=$(az containerapp list -g "$RG" --query "[?contains(name,'api')].name | [0]" -o tsv || true)
++          if [ -n "$APP_NAME" ]; then
++            REV=$(az containerapp revision list -g "$RG" -n "$APP_NAME" \
++              --query "[?properties.active].name | [0]" -o tsv)
++            echo "previous_revision=${APP_NAME}::${REV}" >> "$GITHUB_OUTPUT"
++            echo "Captured previous revision: ${APP_NAME}::${REV}"
++          else
++            echo "previous_revision=" >> "$GITHUB_OUTPUT"
++            echo "No existing Container App found — first deploy."
++          fi
++
++      - name: azd deploy
++        id: deploy
++        run: |
++          set -e
++          azd env select "$AZURE_ENV_NAME" 2>/dev/null || azd env new "$AZURE_ENV_NAME" --location "$AZURE_LOCATION" --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
++          azd deploy --no-prompt
++          URL=$(azd env get-values | grep -E '^SERVICE_API_URI|^API_URL' | head -1 | cut -d'=' -f2- | tr -d '"' || true)
++          echo "endpoint_url=${URL:-https://staging.travel-assistant.invalid}" >> "$GITHUB_OUTPUT"
++
++  smoke:
++    name: Playwright smoke (staging)
++    needs: deploy
++    if: ${{ inputs.skip_smoke != true }}
++    runs-on: ubuntu-latest
++    timeout-minutes: 15
++    outputs:
++      result: ${{ steps.run.outcome }}
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-node@v4
++        with:
++          node-version: "20"
++
++      - name: Install Playwright
++        working-directory: tests/smoke
++        run: |
++          if [ -f package.json ]; then
++            npm ci
++            npx playwright install --with-deps chromium
++          else
++            echo "::warning::tests/smoke not present — skipping smoke run."
++            exit 0
++          fi
++
++      - name: Run smoke
++        id: run
++        working-directory: tests/smoke
++        env:
++          STAGING_URL: ${{ needs.deploy.outputs.endpoint_url }}
++        run: |
++          if [ -f package.json ]; then
++            npx playwright test --reporter=line
++          fi
++
++      - name: Upload Playwright report
++        if: always()
++        uses: actions/upload-artifact@v4
++        with:
++          name: playwright-report
++          path: tests/smoke/playwright-report
++          if-no-files-found: ignore
++          retention-days: 7
++
++  rollback:
++    name: Rollback on smoke failure
++    needs: [deploy, smoke]
++    if: failure() && needs.deploy.outputs.previous_revision != ''
++    runs-on: ubuntu-latest
++    timeout-minutes: 10
++    steps:
++      - name: Azure login (OIDC)
++        uses: azure/login@v2
++        with:
++          client-id: ${{ secrets.AZURE_CLIENT_ID }}
++          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
++          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
++
++      - name: Pin traffic back to previous revision
++        run: |
++          set -e
++          RG="rg-travel-assistant-${AZURE_ENV_NAME}"
++          PREV="${{ needs.deploy.outputs.previous_revision }}"
++          APP_NAME="${PREV%%::*}"
++          REV_NAME="${PREV##*::}"
++          echo "Rolling back $APP_NAME → $REV_NAME"
++          az containerapp ingress traffic set \
++            -g "$RG" -n "$APP_NAME" \
++            --revision-weight "${REV_NAME}=100"
++          az containerapp revision deactivate \
++            -g "$RG" -n "$APP_NAME" --revision "$(az containerapp revision list -g "$RG" -n "$APP_NAME" --query "[?name!='$REV_NAME' && properties.active].name | [0]" -o tsv)" || true
++
++      - name: Notify rollback
++        run: echo "::error::Staging deploy rolled back to ${{ needs.deploy.outputs.previous_revision }}. See docs/runbooks/rollback.md."
+diff --git a/docs/feature-flags.md b/docs/feature-flags.md
+new file mode 100644
+index 0000000..14baaef
+--- /dev/null
++++ b/docs/feature-flags.md
+@@ -0,0 +1,77 @@
++# Feature Flags (REL-4)
++
++**Owner:** review-deployment-squad (Drake) + application-development-squad (Hicks)
++**Store:** Azure App Configuration (Feature Management)
++**Library:** `Microsoft.FeatureManagement.AspNetCore`
++
++## Why
++
++We're trunk-based. Short-lived branches merge to `main` daily, but
++LLM-planner prompt/model changes ship behind flags so we can:
++
++- Roll out per-environment without re-deploying.
++- Kill-switch a misbehaving model in < 30 seconds.
++- A/B prompt variants against eval suites in production.
++
++## Flag taxonomy
++
++| Prefix          | Meaning                              | Owner squad                    |
++| --------------- | ------------------------------------ | ------------------------------ |
++| `llm.*`         | Model / prompt selection             | application-development        |
++| `booking.*`     | Booking provider toggles & retries   | application-development        |
++| `ux.*`          | UI / interaction experiments         | experience-design              |
++| `safety.*`      | Content filters, PII redaction       | security-hardening             |
++| `ops.*`         | Operational kill switches            | review-deployment              |
++
++## Required flags (day 1)
++
++- `llm.planner.model` (string) — model id used by `ILlmGateway` for the
++  itinerary planner. Default: `gpt-4o-mini`.
++- `llm.planner.systemPrompt.version` (string) — version key of the prompt
++  used by the planner. Default: `v1`.
++- `ops.deploy.killSwitch` (bool) — when `true`, returns 503 from
++  `/api/plan` without invoking the LLM. Default: `false`.
++
++## Conventions
++
++- **One flag, one decision.** Don't reuse a flag for multiple call sites.
++- **Default off in production until eval suite passes.** Owner squad
++  attaches the eval run id in the flag description.
++- **Sunset every flag.** Each flag has a `sunset` tag with an ISO date.
++  Drake (release engineer) prunes expired flags monthly.
++- **Never gate auth, payment, or PII handling behind a flag** without
++  security-hardening-squad sign-off. Those paths must be on by default.
++
++## Wiring sketch
++
++```csharp
++// Program.cs
++builder.Configuration.AddAzureAppConfiguration(opt =>
++{
++    opt.Connect(new Uri(builder.Configuration["AppConfig:Endpoint"]!),
++                new DefaultAzureCredential())
++       .UseFeatureFlags(ff => ff.CacheExpirationInterval = TimeSpan.FromSeconds(30));
++});
++builder.Services.AddFeatureManagement();
++```
++
++```csharp
++// LlmGateway.cs
++public sealed class LlmGateway(IFeatureManager flags, IConfiguration cfg)
++{
++    public async Task<string> PlanAsync(string userPrompt, CancellationToken ct)
++    {
++        if (await flags.IsEnabledAsync("ops.deploy.killSwitch"))
++            throw new ServiceUnavailableException("planner disabled by flag");
++
++        var model = cfg["llm:planner:model"] ?? "gpt-4o-mini";
++        // ... call provider ...
++    }
++}
++```
++
++## Rollback via flag
++
++Flipping `ops.deploy.killSwitch=true` is the fastest mitigation — faster than
++a Container Apps revision rollback. Use it first, then perform the proper
++rollback per `docs/runbooks/rollback.md`.
+diff --git a/docs/runbooks/rollback.md b/docs/runbooks/rollback.md
+new file mode 100644
+index 0000000..19186cb
+--- /dev/null
++++ b/docs/runbooks/rollback.md
+@@ -0,0 +1,89 @@
++# Rollback Runbook (REL-5)
++
++**Owner:** review-deployment-squad (Drake)
++**Target time-to-rollback:** < 5 minutes
++**Scope:** Staging and Production Azure Container Apps (API + any sidecar services)
++
++> "Bicep is truth" — never click-fix in the portal. Rollback uses the same automation that deployed.
++
++## When to roll back
++
++Roll back immediately when any of the following are true after a deploy:
++
++- Smoke test job (`deploy-staging.yml → smoke`) fails on staging.
++- Production health check (`/health/ready`) returns non-200 for > 2 minutes.
++- LLM provider error rate > 25% sustained for 5 minutes (App Insights alert).
++- Booking-flow integration tests in the post-deploy job fail.
++- Any P1/P2 incident declared by on-call within 30 minutes of a deploy.
++
++## Rollback options (in order of preference)
++
++### 1. Automatic — let the pipeline do it
++
++The `deploy-staging.yml` workflow already does this on smoke failure: it pins
++ingress traffic back to the previous active revision. **You don't need to
++trigger anything.** Verify in Actions tab → latest "Deploy to Staging" run →
++`rollback` job.
++
++### 2. One-command — `gh workflow run`
++
++```bash
++gh workflow run rollback.yml \
++  --repo tamirdresher/travel-assistant \
++  -f environment=production \
++  -f revision=<previous-revision-name>
++```
++
++(Production rollback workflow lives next to `deploy-staging.yml` once
++INF-1 production env is provisioned.)
++
++### 3. Manual — `az containerapp` (break-glass)
++
++```bash
++ENV=staging   # or production
++RG="rg-travel-assistant-${ENV}"
++APP=$(az containerapp list -g "$RG" --query "[?contains(name,'api')].name | [0]" -o tsv)
++
++# List recent revisions
++az containerapp revision list -g "$RG" -n "$APP" \
++  --query "[].{name:name, active:properties.active, created:properties.createdTime}" -o table
++
++# Pin 100% traffic to a known-good revision
++az containerapp ingress traffic set -g "$RG" -n "$APP" \
++  --revision-weight "<good-revision-name>=100"
++
++# Deactivate the bad revision so it can't accept new traffic
++az containerapp revision deactivate -g "$RG" -n "$APP" \
++  --revision "<bad-revision-name>"
++```
++
++### 4. Fastest mitigation — feature-flag kill switch
++
++Flipping `ops.deploy.killSwitch=true` in Azure App Configuration disables
++the LLM planner end-to-end in < 30s without redeploying. See
++`docs/feature-flags.md`. Use this first if the failure is in the planner
++path, then proceed with a proper rollback.
++
++## After rollback
++
++1. Open an incident issue (`type:incident`) and link the failed deploy run.
++2. Tag application-development-squad and security-hardening-squad if the
++   failure looked like a regression or a security issue.
++3. Do NOT redeploy main until the failing change has been reverted or fixed
++   on a feature branch and passes the full CI gate (REL-1).
++4. Post-incident review within 48h. Capture the root cause in
++   `.squad/decisions.md`.
++
++## Validating rollback worked
++
++- `/health/ready` returns 200 within 60 seconds.
++- App Insights "Failed requests" rate returns to baseline within 5 minutes.
++- Smoke job re-run (manual `workflow_dispatch`) succeeds against staging URL.
++
++## Known limits
++
++- Container Apps revision retention is 100 revisions by default. We keep the
++  last 10 active. Anything older requires a re-deploy from git history.
++- Database schema changes are NOT rolled back automatically. Schema
++  migrations must be backward-compatible (expand → migrate → contract).
++  Owner: application-development-squad (Frost).
+-- 
+2.54.0.vfs.0.2
+

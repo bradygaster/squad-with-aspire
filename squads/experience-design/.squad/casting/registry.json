@@ -1,12 +1,62 @@
 {
   "agents": {
+    "rusty": {
+      "persistent_name": "Rusty",
+      "role": "UX Strategy & IA Lead",
+      "universe": "Ocean's Eleven",
+      "created_at": "2026-06-23",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "linus": {
+      "persistent_name": "Linus",
+      "role": "UI Design & Interaction",
+      "universe": "Ocean's Eleven",
+      "created_at": "2026-06-23",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "saul": {
+      "persistent_name": "Saul",
+      "role": "Visual Design",
+      "universe": "Ocean's Eleven",
+      "created_at": "2026-06-23",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "yen": {
+      "persistent_name": "Yen",
+      "role": "Accessibility",
+      "universe": "Ocean's Eleven",
+      "created_at": "2026-06-23",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "livingston": {
+      "persistent_name": "Livingston",
+      "role": "Frontend Architecture",
+      "universe": "Ocean's Eleven",
+      "created_at": "2026-06-23",
+      "legacy_named": false,
+      "status": "active"
+    },
+    "basher": {
+      "persistent_name": "Basher",
+      "role": "Design Systems",
+      "universe": "Ocean's Eleven",
+      "created_at": "2026-06-23",
+      "legacy_named": false,
+      "status": "active"
+    },
     "UserExperienceAgent": {
       "persistent_name": "UserExperienceAgent",
       "role": "UX Lead",
       "universe": "descriptive",
       "created_at": "2026-06-15",
       "legacy_named": true,
-      "status": "active"
+      "status": "retired",
+      "retired_at": "2026-06-23",
+      "retired_reason": "Placeholder scaffold replaced by cast hire."
     },
     "UserInterfaceAgent": {
       "persistent_name": "UserInterfaceAgent",
@@ -14,7 +64,9 @@
       "universe": "descriptive",
       "created_at": "2026-06-15",
       "legacy_named": true,
-      "status": "active"
+      "status": "retired",
+      "retired_at": "2026-06-23",
+      "retired_reason": "Placeholder scaffold replaced by cast hire."
     },
     "VisualDesignAgent": {
       "persistent_name": "VisualDesignAgent",
@@ -22,7 +74,9 @@
       "universe": "descriptive",
       "created_at": "2026-06-15",
       "legacy_named": true,
-      "status": "active"
+      "status": "retired",
+      "retired_at": "2026-06-23",
+      "retired_reason": "Placeholder scaffold replaced by cast hire."
     },
     "AccessibilityAgent": {
       "persistent_name": "AccessibilityAgent",
@@ -30,7 +84,9 @@
       "universe": "descriptive",
       "created_at": "2026-06-15",
       "legacy_named": true,
-      "status": "active"
+      "status": "retired",
+      "retired_at": "2026-06-23",
+      "retired_reason": "Placeholder scaffold replaced by cast hire."
     },
     "FrontendArchitectureAgent": {
       "persistent_name": "FrontendArchitectureAgent",
@@ -38,7 +94,9 @@
       "universe": "descriptive",
       "created_at": "2026-06-15",
       "legacy_named": true,
-      "status": "active"
+      "status": "retired",
+      "retired_at": "2026-06-23",
+      "retired_reason": "Placeholder scaffold replaced by cast hire."
     },
     "DesignSystemsAgent": {
       "persistent_name": "DesignSystemsAgent",
@@ -46,7 +104,9 @@
       "universe": "descriptive",
       "created_at": "2026-06-15",
       "legacy_named": true,
-      "status": "active"
+      "status": "retired",
+      "retired_at": "2026-06-23",
+      "retired_reason": "Placeholder scaffold replaced by cast hire."
     }
   }
 }

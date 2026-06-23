@@ -1,0 +1,41 @@
+# CODEOWNERS — REL-3
+# Routes PRs to the right squads. Path-specific reviewers are required.
+# All paths fall back to @tamirdresher (project owner / EMU single-user).
+
+# --- Default ---
+*                                @tamirdresher
+
+# --- Infra (azure-infrastructure-squad: Reyes, Vasquez, Hudson, Drake) ---
+infra/**                         @tamirdresher
+.github/workflows/deploy-*.yml   @tamirdresher
+
+# --- CI / release (review-deployment-squad: Hicks, Vasquez, Drake) ---
+.github/workflows/**             @tamirdresher
+.github/CODEOWNERS               @tamirdresher
+.github/pull_request_template.md @tamirdresher
+docs/runbooks/**                 @tamirdresher
+docs/feature-flags.md            @tamirdresher
+
+# --- API / backend (application-development-squad) ---
+src/**                           @tamirdresher
+apps/**                          @tamirdresher
+
+# --- Booking-logic paths require security review ---
+# Any change under these paths must also be reviewed by security-hardening-squad.
+src/**/Booking/**                @tamirdresher
+src/**/Payments/**               @tamirdresher
+src/**/Auth/**                   @tamirdresher
+
+# --- Frontend / web (experience-design-squad + application-development-squad) ---
+web/**                           @tamirdresher
+apps/web/**                      @tamirdresher
+
+# --- Tests (quality-testing-squad) ---
+tests/**                         @tamirdresher
+
+# --- Docs & security policy (security-hardening-squad for /docs/security) ---
+docs/security/**                 @tamirdresher
+
+# --- Squad meta files (coordinator-owned) ---
+.squad/**                        @tamirdresher
+.copilot/**                      @tamirdresher

@@ -1,0 +1,33 @@
+# azd template for travel-assistant
+# INF-1 acceptance: `azd up` from clean sub < 20 min; outputs match AppHost expectations.
+name: travel-assistant
+metadata:
+  template: travel-assistant@0.1.0
+services:
+  api:
+    project: ./src/TravelAssistant.Api
+    language: dotnet
+    host: containerapp
+  web:
+    project: ./src/TravelAssistant.Web
+    language: dotnet
+    host: containerapp
+  worker:
+    project: ./src/TravelAssistant.Worker
+    language: dotnet
+    host: containerapp
+infra:
+  provider: bicep
+  path: infra/bicep
+  module: main
+hooks:
+  predeploy:
+    shell: pwsh
+    run: |
+      Write-Host "Pre-deploy: validating AOAI quota in $env:AZURE_LOCATION"
+      az cognitiveservices account list-skus --location $env:AZURE_LOCATION --kind OpenAI --query "[?contains(name,'S0')]" -o table
+  postprovision:
+    shell: pwsh
+    run: |
+      Write-Host "Post-provision: writing env outputs for AppHost"
+      azd env get-values > .azure/$env:AZURE_ENV_NAME/.env

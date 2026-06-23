@@ -1,0 +1,63 @@
+From fe31a0610394107a410dfc354ad80c465ee478c3 Mon Sep 17 00:00:00 2001
+From: quality-testing-squad <qa@squad.local>
+Date: Tue, 23 Jun 2026 21:31:58 +0300
+Subject: [PATCH] qa: realign chat-smoke to /chat route + drop CA1062 NoWarn
+ (SEC fixed)
+
+---
+ .../tests/chat-smoke.spec.ts                      | 15 +++++++++++----
+ tests/llm-eval/TravelAssistant.LlmEval.csproj     |  8 ++------
+ 2 files changed, 13 insertions(+), 10 deletions(-)
+
+diff --git a/tests/TravelAssistant.E2E.Tests/tests/chat-smoke.spec.ts b/tests/TravelAssistant.E2E.Tests/tests/chat-smoke.spec.ts
+index 83152af..93870ca 100644
+--- a/tests/TravelAssistant.E2E.Tests/tests/chat-smoke.spec.ts
++++ b/tests/TravelAssistant.E2E.Tests/tests/chat-smoke.spec.ts
+@@ -4,13 +4,20 @@ import { test, expect } from '@playwright/test';
+  * QA-1 acceptance: one green Playwright smoke that boots against AppHost
+  * and exercises a single chat turn end-to-end.
+  *
+- * Requires app-dev contracts: chat input has data-testid="chat-input",
+- * send button has data-testid="chat-send", assistant message has
+- * data-testid="chat-msg-assistant".
++ * Requires app-dev contracts (shipped on feat/app-web-routes-testids @ 10a044e):
++ *   - /chat route renders Chat component with data-testid="chat-input"
++ *   - send button has data-testid="chat-send"
++ *   - assistant message has data-testid="chat-msg-assistant"
++ *   - / (home) renders home-cta-chat / home-cta-login CTAs — NOT the chat surface
+  */
+-test('@smoke user can send one chat message and see an assistant reply', async ({ page }) => {
++test('@smoke home CTA navigates to chat and lets a user send one message', async ({ page }) => {
+   await page.goto('/');
+ 
++  // Home page contract: CTAs visible, chat surface is NOT on /
++  await expect(page.getByTestId('home-cta-chat')).toBeVisible();
++  await expect(page.getByTestId('chat-input')).toHaveCount(0);
++
++  await page.goto('/chat');
+   await expect(page.getByTestId('chat-input')).toBeVisible();
+ 
+   await page.getByTestId('chat-input').fill('Plan me a weekend trip to Lisbon.');
+diff --git a/tests/llm-eval/TravelAssistant.LlmEval.csproj b/tests/llm-eval/TravelAssistant.LlmEval.csproj
+index 41cd139..8f0899a 100644
+--- a/tests/llm-eval/TravelAssistant.LlmEval.csproj
++++ b/tests/llm-eval/TravelAssistant.LlmEval.csproj
+@@ -50,13 +50,9 @@
+   <PropertyGroup Condition="Exists('$(MSBuildProjectDirectory)\..\TravelAssistant.Security.Tests\PromptInjection\CorpusLoader.cs')">
+     <DefineConstants>$(DefineConstants);HAS_SHARED_CORPUS_LOADER</DefineConstants>
+     <!--
+-      Suppress CA1062 (validate public method args for null) on the linked
+-      CorpusLoader. The loader is owned by security-hardening-squad and its
+-      public API treats null as a programmer error. Filed upstream: ping
+-      security to add ArgumentNullException.ThrowIfNull in v1.1 of the loader.
+-      Scoped to this project only — does not weaken QA's own code analysis.
++      Security shipped ArgumentNullException.ThrowIfNull guards on the loader
++      (security/sec-2b-prompt-injection-corpus @ ba22345). CA1062 NoWarn dropped.
+     -->
+-    <NoWarn>$(NoWarn);CA1062</NoWarn>
+   </PropertyGroup>
+ 
+ </Project>
+-- 
+2.54.0.vfs.0.2
+

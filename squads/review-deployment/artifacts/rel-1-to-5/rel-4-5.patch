@@ -1,0 +1,242 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Copilot <223556219+Copilot@users.noreply.github.com>
+Date: Tue, 23 Jun 2026 20:38:47 +0300
+Subject: [PATCH] ci: REL-4 release-please + REL-5 prod approval gate
+
+---
+diff --git a/.github/workflows/release.yml b/.github/workflows/release.yml
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/.github/workflows/release.yml
+@@ -0,0 +1,49 @@
++name: Release
++
++# REL-4: SemVer + auto release notes from conventional commits.
++# release-please opens/maintains a release PR. Merging that PR creates a
++# tag (e.g. v0.1.0) and a GitHub Release with generated notes.
++#
++# Tag creation triggers deploy-prod.yml (REL-5) via the `release: published`
++# event on that workflow.
++
++on:
++  push:
++    branches: [main]
++  workflow_dispatch:
++
++permissions:
++  contents: write
++  pull-requests: write
++  issues: write
++
++jobs:
++  release-please:
++    name: release-please
++    runs-on: ubuntu-latest
++    timeout-minutes: 5
++    steps:
++      - uses: googleapis/release-please-action@v4
++        id: release
++        with:
++          # Bootstrap at v0.1.0 per REL-4 acceptance criteria.
++          release-type: simple
++          package-name: travel-assistant
++          bootstrap-sha: ${{ github.sha }}
++          initial-version: 0.1.0
++          # Conventional commits drive the changelog:
++          #   feat:  -> minor bump
++          #   fix:   -> patch bump
++          #   feat!: / BREAKING CHANGE -> major bump
++          changelog-types: |
++            [
++              {"type":"feat","section":"Features","hidden":false},
++              {"type":"fix","section":"Bug Fixes","hidden":false},
++              {"type":"perf","section":"Performance","hidden":false},
++              {"type":"deps","section":"Dependencies","hidden":false},
++              {"type":"docs","section":"Documentation","hidden":false},
++              {"type":"refactor","section":"Refactoring","hidden":true},
++              {"type":"chore","section":"Chores","hidden":true},
++              {"type":"test","section":"Tests","hidden":true},
++              {"type":"ci","section":"CI","hidden":true}
++            ]
+diff --git a/.github/workflows/deploy-prod.yml b/.github/workflows/deploy-prod.yml
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/.github/workflows/deploy-prod.yml
+@@ -0,0 +1,84 @@
++name: Deploy to Production
++
++# REL-5: Production deploys are GATED behind the `prod` GitHub Environment.
++# Trigger: a GitHub Release is published (created by release-please in
++# release.yml when its release PR is merged), OR a manual workflow_dispatch
++# with an explicit tag.
++#
++# The `environment: prod` reference forces required-reviewers approval
++# (configure in repo Settings → Environments → prod → Required reviewers).
++# Until a reviewer approves the run, no Azure call is made.
++
++on:
++  release:
++    types: [published]
++  workflow_dispatch:
++    inputs:
++      tag:
++        description: "Git tag to deploy (e.g. v0.1.0)"
++        required: true
++        type: string
++
++permissions:
++  id-token: write
++  contents: read
++
++concurrency:
++  group: deploy-prod
++  cancel-in-progress: false
++
++env:
++  AZURE_ENV_NAME: ${{ vars.AZURE_ENV_NAME_PROD || 'prod' }}
++  AZURE_LOCATION: ${{ vars.AZURE_LOCATION || 'westeurope' }}
++  DEPLOY_REF: ${{ github.event.release.tag_name || inputs.tag }}
++
++jobs:
++  approve-and-deploy:
++    name: azd deploy → prod (gated)
++    runs-on: ubuntu-latest
++    timeout-minutes: 30
++    environment:
++      name: prod                       # <-- required-reviewers gate lives here
++      url: ${{ steps.deploy.outputs.endpoint_url }}
++    steps:
++      - name: Check out tag
++        uses: actions/checkout@v4
++        with:
++          ref: ${{ env.DEPLOY_REF }}
++
++      - name: Setup .NET
++        uses: actions/setup-dotnet@v4
++        with:
++          dotnet-version: 9.0.x
++
++      - name: Install azd
++        uses: Azure/setup-azd@v2
++
++      - name: Azure login (OIDC)
++        uses: azure/login@v2
++        with:
++          client-id: ${{ secrets.AZURE_CLIENT_ID }}
++          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
++          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID_PROD || secrets.AZURE_SUBSCRIPTION_ID }}
++
++      - name: azd auth login (federated)
++        run: |
++          azd auth login \
++            --client-id "${{ secrets.AZURE_CLIENT_ID }}" \
++            --federated-credential-provider github \
++            --tenant-id "${{ secrets.AZURE_TENANT_ID }}"
++
++      - name: azd deploy
++        id: deploy
++        run: |
++          set -e
++          azd env select "$AZURE_ENV_NAME" 2>/dev/null || \
++            azd env new "$AZURE_ENV_NAME" --location "$AZURE_LOCATION" \
++              --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID_PROD || secrets.AZURE_SUBSCRIPTION_ID }}"
++          azd deploy --no-prompt
++          URL=$(azd env get-values | grep -E '^SERVICE_API_URI|^API_URL' | head -1 | cut -d'=' -f2- | tr -d '"' || true)
++          echo "endpoint_url=${URL:-https://prod.travel-assistant.invalid}" >> "$GITHUB_OUTPUT"
++
++      - name: Annotate release with deploy info
++        run: |
++          echo "::notice title=Production deploy::Deployed ${DEPLOY_REF} to $AZURE_ENV_NAME"
+diff --git a/version.txt b/version.txt
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/version.txt
+@@ -0,0 +1,1 @@
++0.1.0
+diff --git a/release-please-config.json b/release-please-config.json
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/release-please-config.json
+@@ -0,0 +1,12 @@
++{
++  "release-type": "simple",
++  "bump-minor-pre-major": true,
++  "bump-patch-for-minor-pre-major": true,
++  "packages": {
++    ".": {
++      "package-name": "travel-assistant",
++      "initial-version": "0.1.0",
++      "extra-files": []
++    }
++  }
++}
+diff --git a/.release-please-manifest.json b/.release-please-manifest.json
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/.release-please-manifest.json
+@@ -0,0 +1,3 @@
++{
++  ".": "0.0.0"
++}
+diff --git a/docs/release-process.md b/docs/release-process.md
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/docs/release-process.md
+@@ -0,0 +1,49 @@
++# Release Process (REL-4 / REL-5)
++
++## Versioning
++
++- **SemVer** from conventional commits.
++- `feat:` → minor, `fix:` → patch, `feat!:` / `BREAKING CHANGE:` → major.
++- Source of truth: `version.txt` (maintained by release-please).
++- API contract version surfaces in `/api/version` (owned by application-development-squad).
++
++## Flow
++
++```
++main commit → release.yml → release-please PR (open/updated)
++              ↓ (human merge of release PR)
++              tag vX.Y.Z + GitHub Release published
++              ↓
++              deploy-prod.yml triggers
++              ↓
++              prod environment gate (Required Reviewers)
++              ↓ (human approval)
++              azd deploy → prod
++```
++
++## Environments (REL-5)
++
++Configure in **Settings → Environments**:
++
++| Env       | Trigger              | Reviewers required |
++|-----------|----------------------|--------------------|
++| `dev`     | (future) `push: main` for fast inner loop | None |
++| `staging` | `push: main` via `deploy-staging.yml` | None (auto + smoke + rollback) |
++| `prod`    | `release: published` via `deploy-prod.yml` | **≥ 1 reviewer** (set in repo settings) |
++
++> The `environment: prod` reference in `deploy-prod.yml` is the enforcement
++> mechanism. Without the environment configured with required reviewers, the
++> deploy will run unattended — **the gate is operational, not code-only**.
++
++## First Release
++
++1. Merge feature PRs to `main` using conventional commit titles.
++2. release-please opens "chore(main): release 0.1.0".
++3. Maintainer merges that PR → tag `v0.1.0` created → Release published.
++4. `deploy-prod.yml` waits for human approval in the `prod` environment.
++5. Approver approves → azd deploys → `/api/version` reports `0.1.0`.
++
++## Rollback
++
++See `docs/runbooks/rollback.md`. For prod, a hotfix release is preferred
++over revision pinning unless the incident is acute.
+--
+2.45.0

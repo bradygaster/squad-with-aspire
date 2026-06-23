@@ -1,0 +1,327 @@
+From a6f020d69ded58c8fbd97e43e225ef787fd45813 Mon Sep 17 00:00:00 2001
+From: quality-testing-squad <qa@travel-assistant.local>
+Date: Tue, 23 Jun 2026 18:52:02 +0300
+Subject: [PATCH] QA: contract tests for APP-2 (TripPlanInvariants + InMemory
+ providers)
+
+24 xUnit tests, 0 skipped, all green. Locks the wire surface that QA
+records fixtures against. Covers:
+
+- TripPlanInvariants (14 tests): IATA format, origin!=destination,
+  flight time ordering, day-in-range, duplicate dayNumber, activity-on-day,
+  totalCost equality + 1c rounding tolerance, EnsureValid throw/no-throw.
+- XD-5 grounding rules: Grounded items require sources[]; Pending flights
+  cannot emit a flight number. These are merge-gate rules from the
+  experience-design-squad.
+- InMemoryProviders (7 tests): determinism across calls, price scales
+  with travelers, stable ProviderRefId format, Lodging/Activity output
+  shape, null-arg defense, ProviderId='InMemory'.
+
+Also wires src/TravelAssistant.Agent.Abstractions and the new test project
+into TravelAssistant.slnx so solution-wide build/test picks them up.
+
+Closes a QA contract gate. Call TripPlanInvariants.EnsureValid(plan) in
+every provider-driven plan synthesis test going forward.
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
+---
+ TravelAssistant.slnx                          |   4 +
+ .../InMemoryProvidersTests.cs                 |  84 ++++++++++
+ ...lAssistant.Agent.Abstractions.Tests.csproj |  18 ++
+ .../TripPlanInvariantsTests.cs                | 154 ++++++++++++++++++
+ 4 files changed, 260 insertions(+)
+ create mode 100644 tests/TravelAssistant.Agent.Abstractions.Tests/InMemoryProvidersTests.cs
+ create mode 100644 tests/TravelAssistant.Agent.Abstractions.Tests/TravelAssistant.Agent.Abstractions.Tests.csproj
+ create mode 100644 tests/TravelAssistant.Agent.Abstractions.Tests/TripPlanInvariantsTests.cs
+
+diff --git a/TravelAssistant.slnx b/TravelAssistant.slnx
+index f443816..737b570 100644
+--- a/TravelAssistant.slnx
++++ b/TravelAssistant.slnx
+@@ -1,5 +1,9 @@
+ <Solution>
+   <Folder Name="/src/">
+     <Project Path="src/TravelAssistant.Api/TravelAssistant.Api.csproj" />
++    <Project Path="src/TravelAssistant.Agent.Abstractions/TravelAssistant.Agent.Abstractions.csproj" />
++  </Folder>
++  <Folder Name="/tests/">
++    <Project Path="tests/TravelAssistant.Agent.Abstractions.Tests/TravelAssistant.Agent.Abstractions.Tests.csproj" />
+   </Folder>
+ </Solution>
+diff --git a/tests/TravelAssistant.Agent.Abstractions.Tests/InMemoryProvidersTests.cs b/tests/TravelAssistant.Agent.Abstractions.Tests/InMemoryProvidersTests.cs
+new file mode 100644
+index 0000000..3b14636
+--- /dev/null
++++ b/tests/TravelAssistant.Agent.Abstractions.Tests/InMemoryProvidersTests.cs
+@@ -0,0 +1,84 @@
++using TravelAssistant.Agent.Abstractions.Providers;
++using Xunit;
++
++namespace TravelAssistant.Agent.Abstractions.Tests;
++
++/// <summary>
++/// Locks the deterministic, fixture-stable behavior of the InMemory providers used when
++/// TRAVEL_PROVIDERS=InMemory. APP-1 E2E + fixture recording rely on byte-stable output.
++/// </summary>
++public class InMemoryProvidersTests
++{
++    private static readonly DateOnly Date = new(2026, 6, 1);
++
++    [Fact]
++    public async Task Flight_provider_is_deterministic_across_calls()
++    {
++        var p = new InMemoryFlightProvider();
++        var search = new FlightSearch("TLV", "LIS", Date, 2);
++        var a = await p.SearchAsync(search);
++        var b = await p.SearchAsync(search);
++        Assert.Equal(a.Count, b.Count);
++        Assert.Equal(a[0].ProviderRefId, b[0].ProviderRefId);
++        Assert.Equal(a[0].DepartsAt, b[0].DepartsAt);
++        Assert.Equal(a[0].PriceUsd, b[0].PriceUsd);
++    }
++
++    [Fact]
++    public async Task Flight_provider_scales_price_by_travelers()
++    {
++        var p = new InMemoryFlightProvider();
++        var solo = (await p.SearchAsync(new FlightSearch("TLV", "LIS", Date, 1)))[0];
++        var pair = (await p.SearchAsync(new FlightSearch("TLV", "LIS", Date, 2)))[0];
++        Assert.Equal(solo.PriceUsd * 2, pair.PriceUsd);
++    }
++
++    [Fact]
++    public async Task Flight_provider_ref_id_embeds_route_and_date()
++    {
++        var p = new InMemoryFlightProvider();
++        var offer = (await p.SearchAsync(new FlightSearch("TLV", "LIS", Date, 1)))[0];
++        Assert.Equal("inmem-TLV-LIS-20260601", offer.ProviderRefId);
++        Assert.Equal("TLV", offer.Origin);
++        Assert.Equal("LIS", offer.Destination);
++    }
++
++    [Fact]
++    public async Task Lodging_provider_returns_one_stable_offer()
++    {
++        var p = new InMemoryLodgingProvider();
++        var offers = await p.SearchAsync(new LodgingSearch("Lisbon", Date, Date.AddDays(2), 2));
++        Assert.Single(offers);
++        Assert.Equal("inmem-stay-Lisbon-20260601", offers[0].ProviderRefId);
++        Assert.Equal(120m, offers[0].NightlyUsd);
++    }
++
++    [Fact]
++    public async Task Activity_provider_returns_sight_and_meal()
++    {
++        var p = new InMemoryActivityProvider();
++        var offers = await p.SearchAsync(new ActivitySearch("Lisbon", Date));
++        Assert.Equal(2, offers.Count);
++        Assert.Contains(offers, o => o.Kind == ActivityKind.Sight);
++        Assert.Contains(offers, o => o.Kind == ActivityKind.Meal);
++    }
++
++    [Fact]
++    public async Task All_providers_throw_on_null_search()
++    {
++        var f = new InMemoryFlightProvider();
++        var l = new InMemoryLodgingProvider();
++        var a = new InMemoryActivityProvider();
++        await Assert.ThrowsAsync<ArgumentNullException>(() => f.SearchAsync(null!));
++        await Assert.ThrowsAsync<ArgumentNullException>(() => l.SearchAsync(null!));
++        await Assert.ThrowsAsync<ArgumentNullException>(() => a.SearchAsync(null!));
++    }
++
++    [Fact]
++    public void All_providers_report_InMemory_provider_id()
++    {
++        Assert.Equal("InMemory", new InMemoryFlightProvider().ProviderId);
++        Assert.Equal("InMemory", new InMemoryLodgingProvider().ProviderId);
++        Assert.Equal("InMemory", new InMemoryActivityProvider().ProviderId);
++    }
++}
+diff --git a/tests/TravelAssistant.Agent.Abstractions.Tests/TravelAssistant.Agent.Abstractions.Tests.csproj b/tests/TravelAssistant.Agent.Abstractions.Tests/TravelAssistant.Agent.Abstractions.Tests.csproj
+new file mode 100644
+index 0000000..904d06f
+--- /dev/null
++++ b/tests/TravelAssistant.Agent.Abstractions.Tests/TravelAssistant.Agent.Abstractions.Tests.csproj
+@@ -0,0 +1,18 @@
++<Project Sdk="Microsoft.NET.Sdk">
++  <PropertyGroup>
++    <TargetFramework>net9.0</TargetFramework>
++    <ImplicitUsings>enable</ImplicitUsings>
++    <Nullable>enable</Nullable>
++    <IsPackable>false</IsPackable>
++    <IsTestProject>true</IsTestProject>
++    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
++  </PropertyGroup>
++  <ItemGroup>
++    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
++    <PackageReference Include="xunit" Version="2.9.2" />
++    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
++  </ItemGroup>
++  <ItemGroup>
++    <ProjectReference Include="..\..\src\TravelAssistant.Agent.Abstractions\TravelAssistant.Agent.Abstractions.csproj" />
++  </ItemGroup>
++</Project>
+diff --git a/tests/TravelAssistant.Agent.Abstractions.Tests/TripPlanInvariantsTests.cs b/tests/TravelAssistant.Agent.Abstractions.Tests/TripPlanInvariantsTests.cs
+new file mode 100644
+index 0000000..6f6b47e
+--- /dev/null
++++ b/tests/TravelAssistant.Agent.Abstractions.Tests/TripPlanInvariantsTests.cs
+@@ -0,0 +1,154 @@
++using TravelAssistant.Agent.Abstractions;
++using Xunit;
++
++namespace TravelAssistant.Agent.Abstractions.Tests;
++
++/// <summary>
++/// QA contract gate for APP-2. Locks the wire surface of TripPlanInvariants so any provider
++/// adapter or LLM-generated plan must satisfy these rules. XD-5 grounding rules are explicitly covered.
++/// </summary>
++public class TripPlanInvariantsTests
++{
++    private static readonly DateOnly Start = new(2026, 6, 1);
++    private static readonly DateOnly End = new(2026, 6, 3);
++    private static readonly SourceRef Src = new("InMemory", "ref-1", DateTime.UtcNow, "https://example.invalid");
++
++    private static Flight ValidFlight(string id = "f1", string from = "TLV", string to = "LIS")
++        => new(id, from, to,
++            new DateTime(2026, 6, 1, 9, 0, 0, DateTimeKind.Utc),
++            new DateTime(2026, 6, 1, 14, 0, 0, DateTimeKind.Utc),
++            "InMemory Air", "IM100", 200m, PlanItemStatus.Grounded, [Src]);
++
++    private static Activity ValidActivity(DateOnly day, string id = "a1")
++        => new(id, ActivityKind.Sight, "Walk", day.ToDateTime(new TimeOnly(11, 0), DateTimeKind.Utc),
++            60, 25m, "Old Town", PlanItemStatus.Grounded, [Src]);
++
++    private static TripPlan ValidPlan()
++        => new("p1", "Lisbon", Start, End, "USD", 225m,
++            [ValidFlight()],
++            [new TripDay(Start, 1, [ValidActivity(Start)])],
++            [Src]);
++
++    [Fact]
++    public void Valid_plan_passes()
++        => Assert.Empty(TripPlanInvariants.Validate(ValidPlan()));
++
++    [Fact]
++    public void End_before_start_fails()
++    {
++        var p = ValidPlan() with { End = Start.AddDays(-1) };
++        Assert.Contains(TripPlanInvariants.Validate(p), e => e.Contains("end is before start"));
++    }
++
++    [Theory]
++    [InlineData("tlv")]   // lowercase
++    [InlineData("TL")]    // too short
++    [InlineData("TLVX")]  // too long
++    [InlineData("TL1")]   // digit
++    public void Invalid_IATA_origin_fails(string bad)
++    {
++        var p = ValidPlan() with { Flights = [ValidFlight() with { Origin = bad }] };
++        Assert.Contains(TripPlanInvariants.Validate(p), e => e.Contains("invalid IATA origin"));
++    }
++
++    [Fact]
++    public void Origin_equals_destination_fails()
++    {
++        var p = ValidPlan() with { Flights = [ValidFlight() with { Destination = "TLV" }] };
++        Assert.Contains(TripPlanInvariants.Validate(p), e => e.Contains("origin == destination"));
++    }
++
++    [Fact]
++    public void ArrivesAt_not_after_departsAt_fails()
++    {
++        var f = ValidFlight();
++        var bad = f with { ArrivesAt = f.DepartsAt };
++        var p = ValidPlan() with { Flights = [bad] };
++        Assert.Contains(TripPlanInvariants.Validate(p), e => e.Contains("arrivesAt must be after departsAt"));
++    }
++
++    [Fact]
++    public void XD5_Grounded_flight_without_sources_fails()
++    {
++        var p = ValidPlan() with { Flights = [ValidFlight() with { Sources = null }] };
++        Assert.Contains(TripPlanInvariants.Validate(p), e => e.Contains("Grounded items must have at least one source"));
++    }
++
++    [Fact]
++    public void XD5_Pending_flight_with_flightNumber_fails()
++    {
++        var p = ValidPlan() with
++        {
++            Flights =
++            [
++                ValidFlight() with { Status = PlanItemStatus.Pending, Sources = null, FlightNumber = "AA42" }
++            ]
++        };
++        Assert.Contains(TripPlanInvariants.Validate(p),
++            e => e.Contains("Pending items must not emit a specific flight number"));
++    }
++
++    [Fact]
++    public void Day_outside_trip_range_fails()
++    {
++        var p = ValidPlan() with
++        {
++            Days = [new TripDay(End.AddDays(5), 1, [ValidActivity(End.AddDays(5))])]
++        };
++        Assert.Contains(TripPlanInvariants.Validate(p), e => e.Contains("outside trip range"));
++    }
++
++    [Fact]
++    public void Duplicate_dayNumber_fails()
++    {
++        var p = ValidPlan() with
++        {
++            Days =
++            [
++                new TripDay(Start, 1, [ValidActivity(Start, "a1")]),
++                new TripDay(Start.AddDays(1), 1, [ValidActivity(Start.AddDays(1), "a2")])
++            ]
++        };
++        Assert.Contains(TripPlanInvariants.Validate(p), e => e.Contains("duplicate dayNumber"));
++    }
++
++    [Fact]
++    public void Activity_on_wrong_day_fails()
++    {
++        var p = ValidPlan() with
++        {
++            Days = [new TripDay(Start, 1, [ValidActivity(Start.AddDays(2))])]
++        };
++        Assert.Contains(TripPlanInvariants.Validate(p), e => e.Contains("not on day"));
++    }
++
++    [Fact]
++    public void TotalCost_mismatch_fails()
++    {
++        var p = ValidPlan() with { TotalCost = 999m };
++        Assert.Contains(TripPlanInvariants.Validate(p), e => e.Contains("totalCost"));
++    }
++
++    [Fact]
++    public void TotalCost_rounding_within_one_cent_passes()
++    {
++        // 200 (flight) + 25.005 (activity) -> sum 225.005, totalCost 225.00 -> diff 0.005 <= 0.01
++        var p = ValidPlan() with
++        {
++            Days = [new TripDay(Start, 1, [ValidActivity(Start) with { CostUsd = 25.005m }])],
++            TotalCost = 225.00m
++        };
++        Assert.Empty(TripPlanInvariants.Validate(p));
++    }
++
++    [Fact]
++    public void EnsureValid_throws_on_invalid()
++    {
++        var p = ValidPlan() with { End = Start.AddDays(-1) };
++        Assert.Throws<InvalidPlanException>(() => TripPlanInvariants.EnsureValid(p));
++    }
++
++    [Fact]
++    public void EnsureValid_does_not_throw_on_valid()
++        => TripPlanInvariants.EnsureValid(ValidPlan());
++}
+-- 
+2.54.0.vfs.0.2
+

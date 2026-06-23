@@ -1,0 +1,134 @@
+# SEC-1b: PII Redactor gate
+#
+# Hard gates (per docs/security/sec-1/pii-redactor.md):
+#   - 100% of adversarial goldens MUST redact (no PII leakage)
+#   - 0% false-positive rate on benign FP guards
+#
+# Self-skips when the security tests project is absent so this workflow
+# can land ahead of (or independently of) the SEC-1b branch merge.
+#
+# Sibling to: prompt-injection-gate.yml (SEC-5b), supply-chain-scan.yml (SEC-5b)
+#
+# Owner: review-deployment-squad
+# Lane:  SEC-5b CI wiring half for SEC-1b deliverable
+
+name: SEC-1b PII Redactor Gate
+
+on:
+  pull_request:
+    paths:
+      - 'src/TravelAssistant.Security/**'
+      - 'tests/TravelAssistant.Security.Tests/**'
+      - '.github/workflows/pii-redactor-gate.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/TravelAssistant.Security/**'
+      - 'tests/TravelAssistant.Security.Tests/**'
+
+permissions:
+  contents: read
+
+jobs:
+  pii-redactor-goldens:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for Security tests project
+        id: probe
+        run: |
+          if [ -f "tests/TravelAssistant.Security.Tests/TravelAssistant.Security.Tests.csproj" ] \
+             && [ -f "tests/TravelAssistant.Security.Tests/Pii/goldens.yaml" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Security.Tests project or goldens.yaml absent — gate self-skipping."
+          fi
+
+      - name: Setup .NET 9
+        if: steps.probe.outputs.present == 'true'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore
+        if: steps.probe.outputs.present == 'true'
+        run: dotnet restore tests/TravelAssistant.Security.Tests/TravelAssistant.Security.Tests.csproj
+
+      - name: Run PII goldens (TRX output)
+        if: steps.probe.outputs.present == 'true'
+        run: |
+          dotnet test tests/TravelAssistant.Security.Tests/TravelAssistant.Security.Tests.csproj \
+            --configuration Release \
+            --filter "FullyQualifiedName~Pii" \
+            --logger "trx;LogFileName=pii-results.trx" \
+            --results-directory ./test-results \
+            -- RunConfiguration.TreatNoTestsAsError=true
+
+      - name: Enforce 100% adversarial-block / 0% FP gates
+        if: steps.probe.outputs.present == 'true'
+        run: |
+          python3 - <<'PY'
+          import sys, xml.etree.ElementTree as ET, pathlib, re
+
+          trx_files = list(pathlib.Path("test-results").rglob("*.trx"))
+          if not trx_files:
+              print("::error::No TRX results found — test run produced no output.")
+              sys.exit(1)
+
+          ns = {"t": "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"}
+          failed_adversarial = []
+          failed_benign = []
+          passed = 0
+          total = 0
+
+          for trx in trx_files:
+              tree = ET.parse(trx)
+              for r in tree.getroot().findall(".//t:UnitTestResult", ns):
+                  name = r.get("testName", "")
+                  outcome = r.get("outcome", "")
+                  if "Pii" not in name:
+                      continue
+                  total += 1
+                  if outcome == "Passed":
+                      passed += 1
+                      continue
+                  # A failing test is a gate violation. Classify by name convention:
+                  # benign/FP guards typically include "Benign" or "Fp" in the name.
+                  if re.search(r"benign|fp|false.?positive", name, re.I):
+                      failed_benign.append(name)
+                  else:
+                      failed_adversarial.append(name)
+
+          print(f"PII goldens: {passed}/{total} passed")
+
+          fatal = False
+          if failed_adversarial:
+              print("::error::Adversarial PII goldens FAILED (hard gate: 100% must redact):")
+              for n in failed_adversarial:
+                  print(f"  - {n}")
+              fatal = True
+          if failed_benign:
+              print("::error::Benign FP guards FAILED (hard gate: 0% false-positive):")
+              for n in failed_benign:
+                  print(f"  - {n}")
+              fatal = True
+
+          if fatal:
+              sys.exit(1)
+          if total == 0:
+              print("::error::No PII tests discovered — filter mismatch or empty suite.")
+              sys.exit(1)
+          print("::notice::PII redactor gates PASSED.")
+          PY
+
+      - name: Upload test results
+        if: always() && steps.probe.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pii-redactor-results
+          path: test-results/
+          retention-days: 14

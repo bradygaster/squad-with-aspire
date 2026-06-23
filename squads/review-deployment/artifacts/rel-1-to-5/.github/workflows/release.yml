@@ -1,0 +1,49 @@
+name: Release
+
+# REL-4: SemVer + auto release notes from conventional commits.
+# release-please opens/maintains a release PR. Merging that PR creates a
+# tag (e.g. v0.1.0) and a GitHub Release with generated notes.
+#
+# Tag creation triggers deploy-prod.yml (REL-5) via the `release: published`
+# event on that workflow.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  release-please:
+    name: release-please
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          # Bootstrap at v0.1.0 per REL-4 acceptance criteria.
+          release-type: simple
+          package-name: travel-assistant
+          bootstrap-sha: ${{ github.sha }}
+          initial-version: 0.1.0
+          # Conventional commits drive the changelog:
+          #   feat:  -> minor bump
+          #   fix:   -> patch bump
+          #   feat!: / BREAKING CHANGE -> major bump
+          changelog-types: |
+            [
+              {"type":"feat","section":"Features","hidden":false},
+              {"type":"fix","section":"Bug Fixes","hidden":false},
+              {"type":"perf","section":"Performance","hidden":false},
+              {"type":"deps","section":"Dependencies","hidden":false},
+              {"type":"docs","section":"Documentation","hidden":false},
+              {"type":"refactor","section":"Refactoring","hidden":true},
+              {"type":"chore","section":"Chores","hidden":true},
+              {"type":"test","section":"Tests","hidden":true},
+              {"type":"ci","section":"CI","hidden":true}
+            ]

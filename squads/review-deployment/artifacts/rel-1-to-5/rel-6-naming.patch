@@ -1,0 +1,73 @@
+From: review-deployment-squad <noreply@squad.local>
+Date: Tue, 23 Jun 2026 20:45:00 +0300
+Subject: [PATCH] ci(rel-6): decouple deploy workflows from hardcoded resource names
+
+Resolve canonical Container App / RG names via `azd env get-value` from
+azure-infrastructure-squad's Bicep outputs (RESOURCE_GROUP_NAME,
+API_CONTAINER_APP_NAME), falling back to the `ca-api-{env}` convention
+and `az containerapp list` discovery if outputs are missing.
+
+Removes the hardcoded `rg-travel-assistant-${AZURE_ENV_NAME}` /
+`contains(name,'api')` coupling that broke once Bicep settled on
+`ca-api-staging` / `ca-api-prod` per INF-1 naming convention.
+
+No functional change when Bicep outputs are present; safe regression
+path when they aren't (fallback discovery still finds the api app).
+
+Refs: azure-infrastructure-squad oidc-setup.md §1 (naming)
+Refs: REL-3, REL-5
+---
+ .github/workflows/deploy-staging.yml | 25 ++++++++++++++++++++-----
+ 1 file changed, 21 insertions(+), 4 deletions(-)
+
+diff --git a/.github/workflows/deploy-staging.yml b/.github/workflows/deploy-staging.yml
+--- a/.github/workflows/deploy-staging.yml
++++ b/.github/workflows/deploy-staging.yml
+@@ -68,12 +68,28 @@ jobs:
+             --federated-credential-provider github \
+             --tenant-id "${{ secrets.AZURE_TENANT_ID }}"
+ 
++      - name: Resolve canonical names from azd/Bicep outputs
++        id: names
++        run: |
++          set -e
++          azd env select "$AZURE_ENV_NAME" 2>/dev/null || true
++          # Prefer Bicep outputs (azure-infrastructure-squad publishes these).
++          RG=$(azd env get-value RESOURCE_GROUP_NAME 2>/dev/null || echo "rg-travel-assistant-${AZURE_ENV_NAME}")
++          APP_NAME=$(azd env get-value API_CONTAINER_APP_NAME 2>/dev/null || echo "ca-api-${AZURE_ENV_NAME}")
++          echo "rg=$RG" >> "$GITHUB_OUTPUT"
++          echo "app_name=$APP_NAME" >> "$GITHUB_OUTPUT"
++          echo "Resolved RG=$RG APP=$APP_NAME"
++
+       - name: Snapshot current revision (for rollback)
+         id: snapshot
+         run: |
+           set -e
+-          RG="rg-travel-assistant-${AZURE_ENV_NAME}"
+-          APP_NAME=$(az containerapp list -g "$RG" --query "[?contains(name,'api')].name | [0]" -o tsv || true)
++          RG="${{ steps.names.outputs.rg }}"
++          APP_NAME="${{ steps.names.outputs.app_name }}"
++          # Verify the app exists; fall back to discovery if Bicep output was stale.
++          if ! az containerapp show -g "$RG" -n "$APP_NAME" >/dev/null 2>&1; then
++            APP_NAME=$(az containerapp list -g "$RG" --query "[?starts_with(name,'ca-api') || contains(name,'api')].name | [0]" -o tsv || true)
++          fi
+           if [ -n "$APP_NAME" ]; then
+             REV=$(az containerapp revision list -g "$RG" -n "$APP_NAME" \
+               --query "[?properties.active].name | [0]" -o tsv)
+@@ -154,10 +170,11 @@ jobs:
+       - name: Pin traffic back to previous revision
+         run: |
+           set -e
+-          RG="rg-travel-assistant-${AZURE_ENV_NAME}"
+           PREV="${{ needs.deploy.outputs.previous_revision }}"
+           APP_NAME="${PREV%%::*}"
+           REV_NAME="${PREV##*::}"
+-          echo "Rolling back $APP_NAME → $REV_NAME"
++          # Re-resolve RG from azd outputs if available, fall back to convention.
++          RG=$(azd env get-value RESOURCE_GROUP_NAME 2>/dev/null || echo "rg-travel-assistant-${AZURE_ENV_NAME}")
++          echo "Rolling back $APP_NAME → $REV_NAME in $RG"
+           az containerapp ingress traffic set \
+             -g "$RG" -n "$APP_NAME" \
+             --revision-weight "${REV_NAME}=100"
+-- 
+2.43.0

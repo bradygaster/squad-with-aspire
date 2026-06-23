@@ -1,0 +1,325 @@
+From fcbfb21bcc79e29c2a14429ff7ef93e45d203052 Mon Sep 17 00:00:00 2001
+From: azure-infrastructure-squad <vasquez@squad.local>
+Date: Tue, 23 Jun 2026 18:48:37 +0300
+Subject: [PATCH] INF-2/INF-4: wire SEC-1 hardened Key Vault contract + SEC-5
+ prod-guard deploy gate
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Consumes security-hardening-squad's contract from PR #39:
+- keyVault.bicep: RBAC-only, soft-delete 90d, purge protection ON,
+  publicNetworkAccess Disabled when PE present. Adds workloadPrincipalId
+  (Secrets User) and optional deployPrincipalId (Secrets Officer).
+  Legacy keyVaultUri/keyVaultId/keyVaultName outputs preserved as aliases.
+- main.bicep: passes new param shape + PE subnet + KV private DNS zone.
+  New top-level param keyVaultDeployPrincipalId (default '').
+- infra-deploy.yml: new prod-guard-gate job calls GET /health/prod-guard
+  on the deployed Container App FQDN post-deploy, pre-traffic-flip.
+  200 = proceed; 503 = fail the deploy and surface revision list for
+  rollback per docs/runbooks/rollback.md. 10× retry / 15s for ACA warm-up.
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
+---
+ .github/workflows/infra-deploy.yml |  77 +++++++++++++++++
+ infra/bicep/main.bicep             |  14 ++-
+ infra/bicep/modules/keyVault.bicep | 133 ++++++++++++++++++++++-------
+ 3 files changed, 192 insertions(+), 32 deletions(-)
+
+diff --git a/.github/workflows/infra-deploy.yml b/.github/workflows/infra-deploy.yml
+index 0ba08bb..7f3f0b4 100644
+--- a/.github/workflows/infra-deploy.yml
++++ b/.github/workflows/infra-deploy.yml
+@@ -59,6 +59,8 @@ jobs:
+     if: github.event_name != 'pull_request'
+     runs-on: ubuntu-latest
+     environment: ${{ github.event.inputs.environment || 'dev' }}
++    outputs:
++      apiFqdn: ${{ steps.outputs.outputs.apiFqdn }}
+     steps:
+       - uses: actions/checkout@v4
+ 
+@@ -70,6 +72,7 @@ jobs:
+           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+ 
+       - name: Deploy
++        id: deploy
+         env:
+           ENV: ${{ github.event.inputs.environment || 'dev' }}
+         run: |
+@@ -78,3 +81,77 @@ jobs:
+             --template-file infra/bicep/main.bicep \
+             --parameters infra/bicep/parameters/$ENV.bicepparam \
+             --name "infra-${{ github.run_id }}"
++
++      - name: Capture outputs
++        id: outputs
++        env:
++          ENV: ${{ github.event.inputs.environment || 'dev' }}
++        run: |
++          FQDN=$(az deployment group show \
++            --resource-group rg-travelassist-$ENV \
++            --name "infra-${{ github.run_id }}" \
++            --query 'properties.outputs.apiAppFqdn.value' -o tsv)
++          echo "apiFqdn=$FQDN" >> "$GITHUB_OUTPUT"
++          echo "API FQDN: $FQDN"
++
++  prod-guard-gate:
++    # SEC-5 deploy gate (per security-hardening-squad).
++    # Spec: docs/security/sec-5/aspire-prod-hardening.md
++    # 200 = safe to flip traffic. 503 = block and roll back via revision pin.
++    name: Prod-guard gate (post-deploy, pre-traffic-flip)
++    needs: deploy
++    if: github.event_name != 'pull_request'
++    runs-on: ubuntu-latest
++    environment: ${{ github.event.inputs.environment || 'dev' }}
++    steps:
++      - name: Probe /health/prod-guard
++        env:
++          API_FQDN: ${{ needs.deploy.outputs.apiFqdn }}
++        run: |
++          if [ -z "$API_FQDN" ]; then
++            echo "::error::deploy job did not emit apiAppFqdn output"
++            exit 1
++          fi
++          URL="https://${API_FQDN}/health/prod-guard"
++          echo "Probing $URL"
++
++          # Retry up to 10× over ~2.5 min — Container Apps revision needs warm-up.
++          for attempt in 1 2 3 4 5 6 7 8 9 10; do
++            HTTP_CODE=$(curl -sS -o /tmp/guard.json -w '%{http_code}' --max-time 10 "$URL" || echo "000")
++            echo "attempt=$attempt http=$HTTP_CODE"
++            if [ "$HTTP_CODE" = "200" ]; then
++              echo "✅ prod-guard passed"
++              cat /tmp/guard.json || true
++              exit 0
++            fi
++            if [ "$HTTP_CODE" = "503" ]; then
++              echo "::error::prod-guard returned 503 — production hardening checks FAILED"
++              cat /tmp/guard.json || true
++              echo "::error::Roll back via: az containerapp revision deactivate (see docs/runbooks/rollback.md)"
++              exit 1
++            fi
++            sleep 15
++          done
++
++          echo "::error::prod-guard never reached 200/503 after 10 attempts (last=$HTTP_CODE)"
++          exit 1
++
++      - name: Az login (OIDC) for rollback context
++        if: failure()
++        uses: azure/login@v2
++        with:
++          client-id: ${{ vars.AZURE_CLIENT_ID }}
++          tenant-id: ${{ vars.AZURE_TENANT_ID }}
++          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
++
++      - name: Surface latest revisions on failure
++        if: failure()
++        env:
++          ENV: ${{ github.event.inputs.environment || 'dev' }}
++        run: |
++          echo "::warning::prod-guard FAILED — listing recent revisions for manual rollback"
++          az containerapp revision list \
++            --resource-group rg-travelassist-$ENV \
++            --name travelassist-$ENV-api \
++            --query "reverse(sort_by([], &properties.createdTime))[:5].{name:name, active:properties.active, traffic:properties.trafficWeight, created:properties.createdTime}" \
++            -o table || true
+\ No newline at end of file
+diff --git a/infra/bicep/main.bicep b/infra/bicep/main.bicep
+index 81e51b1..fd16fd9 100644
+--- a/infra/bicep/main.bicep
++++ b/infra/bicep/main.bicep
+@@ -27,6 +27,9 @@ param budgetContactEmails array = []
+ @description('Deploy data tier with private endpoints (AOAI + Postgres). Disable for super-minimal dev.')
+ param deployDataTier bool = true
+ 
++@description('Object ID of the deploy principal (UAMI / human ops) for Key Vault Secrets Officer. Empty = skip.')
++param keyVaultDeployPrincipalId string = ''
++
+ // Outputs from modules
+ var logWorkspaceName = '${resourcePrefix}-${environmentName}-logs'
+ var appInsightsName = '${resourcePrefix}-${environmentName}-ai'
+@@ -80,14 +83,19 @@ module cosmosDb './modules/cosmosDb.bicep' = {
+   }
+ }
+ 
+-// 4. Key Vault (for storing secrets like Amadeus API key, Azure OpenAI key)
++// 4. Key Vault — SEC-1 hardened contract (RBAC, soft-delete 90d, purge protection, PE).
++//    Spec: docs/security/sec-1/secrets-policy.md
+ module keyVault './modules/keyVault.bicep' = {
+   name: 'keyVault-deployment'
+   params: {
+-    keyVaultName: keyVaultName
++    name: keyVaultName
+     location: location
+     tags: tags
+-    containerAppManagedIdentityPrincipalId: containerApps.outputs.apiAppManagedIdentityPrincipalId
++    workloadPrincipalId: containerApps.outputs.apiAppManagedIdentityPrincipalId
++    deployPrincipalId: keyVaultDeployPrincipalId
++    enablePrivateEndpoint: deployDataTier
++    privateEndpointSubnetId: deployDataTier ? network.outputs.peSubnetId : ''
++    privateDnsZoneId: deployDataTier ? network.outputs.keyVaultDnsZoneId : ''
+   }
+ }
+ 
+diff --git a/infra/bicep/modules/keyVault.bicep b/infra/bicep/modules/keyVault.bicep
+index d72e86b..f75c126 100644
+--- a/infra/bicep/modules/keyVault.bicep
++++ b/infra/bicep/modules/keyVault.bicep
+@@ -1,47 +1,122 @@
+-@description('Key Vault name')
+-param keyVaultName string
++// INF-2 wire-in of SEC-1's hardened Key Vault contract.
++// Owner: azure-infrastructure-squad (Hudson, identity). Spec: docs/security/sec-1/secrets-policy.md.
++//
++// Replaces the MVP access-policy version. Now RBAC-only, 90-day soft delete,
++// purge protection ON, public network disabled when PE is present.
+ 
+-@description('Azure region')
+-param location string
++@description('Key Vault name (3-24 chars, globally unique).')
++@minLength(3)
++@maxLength(24)
++param name string
+ 
+-@description('Resource tags')
+-param tags object
++@description('Azure region.')
++param location string = resourceGroup().location
+ 
+-@description('Managed Identity Principal ID of the Container App (for access policy)')
+-param containerAppManagedIdentityPrincipalId string
++@description('Resource tags.')
++param tags object = {
++  app: 'travel-assistant'
++}
++
++@description('Object ID of the workload managed identity (Container App). Granted Key Vault Secrets User.')
++param workloadPrincipalId string
++
++@description('Object ID of the deploy principal (UAMI from github-oidc.bicep, or human ops). Granted Key Vault Secrets Officer. Empty = skip.')
++param deployPrincipalId string = ''
++
++@description('Enable private endpoint. Disable only in dev sandboxes without a VNet.')
++param enablePrivateEndpoint bool = true
++
++@description('Subnet resource id for the PE. Required when enablePrivateEndpoint = true.')
++param privateEndpointSubnetId string = ''
+ 
+-// Key Vault - Standard tier (no Premium HSM needed for MVP)
+-resource keyVault 'Microsoft.KeyVault/vaults@2023-02-01' = {
+-  name: keyVaultName
++@description('Private DNS zone resource id for privatelink.vaultcore.azure.net. Required when enablePrivateEndpoint = true.')
++param privateDnsZoneId string = ''
++
++var keyVaultSecretsUserRoleId    = '4633458b-17de-408a-b874-0445c86b69e6'
++var keyVaultSecretsOfficerRoleId = 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
++
++resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
++  name: name
+   location: location
+   tags: tags
+   properties: {
++    tenantId: subscription().tenantId
+     sku: {
+       family: 'A'
+-      name: 'standard' // Standard tier is sufficient for secret storage
++      name: 'standard'
+     }
+-    tenantId: subscription().tenantId
+-    enableRbacAuthorization: false // Use access policies for simplicity
++    enableRbacAuthorization: true
+     enableSoftDelete: true
+-    softDeleteRetentionInDays: 7 // Minimum retention for soft delete
+-    enablePurgeProtection: false // Not required for MVP, saves cost
+-    publicNetworkAccess: 'Enabled'
+-    accessPolicies: [
++    softDeleteRetentionInDays: 90
++    enablePurgeProtection: true
++    publicNetworkAccess: enablePrivateEndpoint ? 'Disabled' : 'Enabled'
++    networkAcls: {
++      defaultAction: enablePrivateEndpoint ? 'Deny' : 'Allow'
++      bypass: 'AzureServices'
++    }
++  }
++}
++
++resource workloadReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
++  name: guid(vault.id, workloadPrincipalId, keyVaultSecretsUserRoleId)
++  scope: vault
++  properties: {
++    principalId: workloadPrincipalId
++    principalType: 'ServicePrincipal'
++    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultSecretsUserRoleId)
++  }
++}
++
++resource deployWriter 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(deployPrincipalId)) {
++  name: guid(vault.id, deployPrincipalId, keyVaultSecretsOfficerRoleId)
++  scope: vault
++  properties: {
++    principalId: deployPrincipalId
++    principalType: 'ServicePrincipal'
++    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultSecretsOfficerRoleId)
++  }
++}
++
++resource privateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = if (enablePrivateEndpoint) {
++  name: '${name}-pe'
++  location: location
++  tags: tags
++  properties: {
++    subnet: {
++      id: privateEndpointSubnetId
++    }
++    privateLinkServiceConnections: [
++      {
++        name: '${name}-plsc'
++        properties: {
++          privateLinkServiceId: vault.id
++          groupIds: [ 'vault' ]
++        }
++      }
++    ]
++  }
++}
++
++resource peDnsGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-09-01' = if (enablePrivateEndpoint && !empty(privateDnsZoneId)) {
++  parent: privateEndpoint
++  name: 'default'
++  properties: {
++    privateDnsZoneConfigs: [
+       {
+-        tenantId: subscription().tenantId
+-        objectId: containerAppManagedIdentityPrincipalId
+-        permissions: {
+-          secrets: [
+-            'get'
+-            'list'
+-          ]
+-          // No key or certificate permissions needed for MVP
++        name: 'vaultcore'
++        properties: {
++          privateDnsZoneId: privateDnsZoneId
+         }
+       }
+     ]
+   }
+ }
+ 
+-output keyVaultId string = keyVault.id
+-output keyVaultName string = keyVault.name
+-output keyVaultUri string = keyVault.properties.vaultUri
++// Outputs match SEC-1's contract (vaultUri/vaultId/vaultName) plus legacy aliases
++// so existing main.bicep consumers don't break.
++output vaultUri    string = vault.properties.vaultUri
++output vaultId     string = vault.id
++output vaultName   string = vault.name
++output keyVaultUri string = vault.properties.vaultUri
++output keyVaultId  string = vault.id
++output keyVaultName string = vault.name
+\ No newline at end of file
+-- 
+2.54.0.vfs.0.2
+

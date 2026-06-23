@@ -1,0 +1,138 @@
+name: CI
+
+# REL-1: Build, test, lint, secret scan on every PR + main push.
+# This workflow is the required check that gates merges to main.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+  security-events: write
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+jobs:
+  build-test:
+    name: build + test (.NET)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            9.0.x
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/*.slnx', '**/Directory.Packages.props') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore
+        run: dotnet restore TravelAssistant.slnx
+
+      - name: Build
+        run: dotnet build TravelAssistant.slnx --configuration Release --no-restore /warnaserror
+
+      - name: Test
+        run: |
+          dotnet test TravelAssistant.slnx \
+            --configuration Release \
+            --no-build \
+            --logger "trx;LogFileName=test-results.trx" \
+            --logger "GitHubActions;summary.includePassedTests=false" \
+            --collect:"XPlat Code Coverage" \
+            --results-directory ./TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults/**/*
+          retention-days: 7
+
+  lint-format:
+    name: lint + format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+      - name: Verify dotnet format
+        run: dotnet format TravelAssistant.slnx --verify-no-changes --severity warn
+
+  secret-scan:
+    name: secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: true
+          GITLEAKS_ENABLE_SUMMARY: true
+
+  codeql:
+    name: CodeQL (C#)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: csharp
+          build-mode: autobuild
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:csharp"
+
+  ci-gate:
+    name: CI Gate (required)
+    needs: [build-test, lint-format, secret-scan, codeql]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Fail if any required job failed
+        run: |
+          if [[ "${{ needs.build-test.result }}" != "success" \
+             || "${{ needs.lint-format.result }}" != "success" \
+             || "${{ needs.secret-scan.result }}" != "success" \
+             || "${{ needs.codeql.result }}" != "success" ]]; then
+            echo "One or more required CI jobs failed."
+            exit 1
+          fi
+          echo "All required CI jobs passed."
