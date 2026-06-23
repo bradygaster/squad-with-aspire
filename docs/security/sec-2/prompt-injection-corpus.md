@@ -64,7 +64,22 @@ public async Task Guard_HandlesPayload_AsExpected(CorpusEntry entry)
 }
 ```
 
-The guard implementation lives in `src/TravelAssistant.Api/Security/PromptInjectionGuard.cs` (SEC-2 — separate ticket, not in this PR). This PR ships **corpus + spec only**; the guard test class will land when SEC-2 implementation lands.
+The guard implementation lives in `src/TravelAssistant.Api/Security/PromptInjectionGuard.cs` (SEC-2 — separate ticket, not in this PR). This PR ships **corpus + spec + CI results-collector skeleton**; the guard test class will land when SEC-2 implementation lands.
+
+### CI results-collector contract (locked with review-deployment-squad / SEC-5b gate)
+
+A collection fixture at [`tests/TravelAssistant.Security.Tests/PromptInjection/CorpusResultsCollector.cs`](../../../tests/TravelAssistant.Security.Tests/PromptInjection/CorpusResultsCollector.cs) writes a JSON file at the path in env var `SEC2_CORPUS_RESULTS` exactly once at test-collection dispose. The SEC-5b GitHub Actions gate (`prompt-injection-gate.yml`) parses this file to enforce the three acceptance gates above.
+
+**Shape — do NOT change without pinging review-deployment-squad:**
+
+```json
+[
+  { "id": "direct-override-001", "severity": "critical", "expected": "block", "actual": "block" },
+  { "id": "benign-rain-001",     "severity": "low",      "expected": "allow", "actual": "allow" }
+]
+```
+
+SEC-2 guard implementor: decorate the Theory class with `[Collection(CorpusResultsCollection.Name)]`, inject `CorpusResultsCollector`, and call `_results.Record(entry.Id, entry.Severity, entry.Expected, actualVerdict)` inside each test before asserting. Local runs (no env var) are no-ops; CI runs flush to disk for the gate.
 
 ## Unicode handling pre-check
 
