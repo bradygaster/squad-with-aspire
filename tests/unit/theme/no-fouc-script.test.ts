@@ -52,9 +52,15 @@ describe('DM-004 §6 NO_FOUC_SCRIPT shape contract (DM-003 / DM-005 D5-1)', () =
     expect(bytes, `NO_FOUC_SCRIPT is ${bytes}B — must be ≤500B`).toBeLessThanOrEqual(500);
   });
 
-  maybe('script reads localStorage key "ta.theme"', () => {
+  maybe('script reads localStorage key "ta:theme:v1" (release-captain v0.5.0 lock)', () => {
     const literal = extractScriptLiteral(fs.readFileSync(found!, 'utf8'))!;
-    expect(literal).toMatch(/localStorage\.getItem\(\s*['"]ta\.theme['"]\s*\)/);
+    // Locked by .github/workflows/dark-mode-gate.yml job `contract-invariants`.
+    // The colon-separator + :v1 version suffix is the schema seam — do NOT relax
+    // back to `ta.theme` without a corresponding gate update + migration plan.
+    expect(literal).toMatch(/localStorage\.getItem\(\s*['"]ta:theme:v1['"]\s*\)/);
+    // Negative assertion: the unversioned key must not appear anywhere in the
+    // boot script (would indicate a partial reconcile / dead-code leak).
+    expect(literal).not.toMatch(/['"]ta\.theme['"]/);
   });
 
   maybe('script writes data-theme on document.documentElement before paint', () => {

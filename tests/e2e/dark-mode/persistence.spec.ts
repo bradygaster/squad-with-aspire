@@ -29,7 +29,7 @@ test.describe('DM-004 §3 persistence', () => {
 
   test('corrupted localStorage falls back to system', async ({ page }) => {
     await page.addInitScript(() => {
-      try { localStorage.setItem('ta.theme', 'garbage'); } catch { /* ignore */ }
+      try { localStorage.setItem('ta:theme:v1', 'garbage'); } catch { /* ignore */ }
     });
     await page.goto(BASE);
     // resolved must be light or dark, never "garbage" or "system" as data-theme
@@ -53,7 +53,7 @@ test.describe('DM-004 §3 persistence', () => {
 
 test.describe('DM-004 §4 no-FOUC', () => {
   test('stored=dark: html[data-theme=dark] set before first paint with dark bg', async ({ page }) => {
-    await page.addInitScript(() => localStorage.setItem('ta.theme', 'dark'));
+    await page.addInitScript(() => localStorage.setItem('ta:theme:v1', 'dark'));
     // Intercept first response and assert inline <script> sets data-theme synchronously.
     const responsePromise = page.waitForResponse(r => r.url().startsWith(BASE) && r.request().resourceType() === 'document');
     await page.goto(BASE);

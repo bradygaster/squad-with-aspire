@@ -17,7 +17,7 @@ implementation when it lands.
 ## Binding contract for DM-002
 
 - HTML must expose `data-theme="light"|"dark"` on `<html>`.
-- Storage key: `ta.theme`, values `light|dark|system`, anything else → system.
+- Storage key: `ta:theme:v1` (locked by dark-mode-gate.yml `contract-invariants`; colon separator + `:v1` schema-version suffix), values `light|dark|system`, anything else → system.
 - Toggle: `role=radiogroup` w/ accessible name `Theme`, three radios `light|dark|system`.
 - Pre-paint inline script in `<head>` reads storage + matchMedia and writes
   `data-theme` *synchronously* before first frame (asserted in §4 FOUC test).

@@ -11,7 +11,7 @@ export interface Storage {
   getItem(key: string): string | null;
 }
 
-export function readStoredPref(storage: Storage | null, key = 'ta.theme'): ThemePref {
+export function readStoredPref(storage: Storage | null, key = 'ta:theme:v1'): ThemePref {
   if (!storage) return 'system';
   let raw: string | null;
   try {
