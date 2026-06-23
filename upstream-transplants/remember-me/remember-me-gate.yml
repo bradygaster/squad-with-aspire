@@ -1,0 +1,109 @@
+name: remember-me-gate
+
+# Required check for the "remember me" PR on tamirdresher/travel-assistant.
+# Maintainer copies this file to .github/workflows/remember-me-gate.yml on the
+# feature branch when applying the first RM patch.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/web/src/features/auth/**'
+      - 'apps/web/src/lib/auth/**'
+      - 'src/TravelAssistant.Api/Auth/**'
+      - 'src/TravelAssistant.Api.Tests/Auth/**'
+      - '.semgrep/remember-me.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  contract-invariants:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: storage-key is exactly ta:auth:remember:v1
+        run: |
+          set -euo pipefail
+          # Must appear at least once in client code
+          grep -RIn --include='*.ts' --include='*.tsx' "ta:auth:remember:v1" apps/web/src/ \
+            || { echo "::error::missing canonical storage key ta:auth:remember:v1"; exit 1; }
+          # Must NOT appear under any other shape
+          if grep -RInE "ta[:.]auth[:.]remember(?!:v1)" apps/web/src/ --include='*.ts' --include='*.tsx'; then
+            echo "::error::found non-canonical remember-me storage key variant"; exit 1
+          fi
+
+      - name: token TTL constants are 12h and 30d only
+        run: |
+          set -euo pipefail
+          # Server constants must declare these two values, in seconds
+          grep -RIn "43200" src/TravelAssistant.Api/Auth/ \
+            || { echo "::error::missing 12h (43200s) TTL constant"; exit 1; }
+          grep -RIn "2592000" src/TravelAssistant.Api/Auth/ \
+            || { echo "::error::missing 30d (2592000s) TTL constant"; exit 1; }
+          # Reject any other Max-Age literal in the cookie writer path
+          if grep -RInE "Max-?Age\s*=\s*(?!43200|2592000)[0-9]+" src/TravelAssistant.Api/Auth/; then
+            echo "::error::unexpected cookie Max-Age literal in auth path"; exit 1
+          fi
+
+      - name: cookie attributes locked
+        run: |
+          set -euo pipefail
+          grep -RIn "HttpOnly" src/TravelAssistant.Api/Auth/ >/dev/null
+          grep -RIn "Secure"   src/TravelAssistant.Api/Auth/ >/dev/null
+          grep -RIn "SameSite" src/TravelAssistant.Api/Auth/ | grep -i "Lax" >/dev/null \
+            || { echo "::error::SameSite must be Lax"; exit 1; }
+
+      - name: revocation hooks present (logout + password-change)
+        run: |
+          set -euo pipefail
+          grep -RIn "RevokeRefreshTokensForUser" src/TravelAssistant.Api/Auth/ >/dev/null \
+            || { echo "::error::missing revocation hook"; exit 1; }
+          # Must be wired into BOTH logout and password-change controllers
+          grep -RIn "RevokeRefreshTokensForUser" src/TravelAssistant.Api/ --include='*Logout*.cs'        >/dev/null
+          grep -RIn "RevokeRefreshTokensForUser" src/TravelAssistant.Api/ --include='*Password*.cs'      >/dev/null
+
+      - name: a11y — checkbox has label association
+        run: |
+          set -euo pipefail
+          grep -RInE 'aria-labelledby|<label[^>]+htmlFor' apps/web/src/features/auth/ \
+            || { echo "::error::remember-me checkbox missing label association"; exit 1; }
+
+  build-and-test:
+    runs-on: ubuntu-latest
+    needs: contract-invariants
+    strategy:
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ matrix.node }}', cache: 'pnpm' }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @ta/web lint
+      - run: pnpm --filter @ta/web typecheck
+      - run: pnpm --filter @ta/web test
+      - run: pnpm --filter @ta/web build
+
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '8.0.x' }
+      - run: dotnet test src/TravelAssistant.Api.Tests --filter 'FullyQualifiedName~RememberMe' --no-restore || dotnet test src/TravelAssistant.Api.Tests --filter 'FullyQualifiedName~RememberMe'
+
+  threat-model-approved:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: RM-005 APPROVED marker required
+        run: |
+          set -euo pipefail
+          grep -q "^RM-005: APPROVED$" docs/remember-me/threat-model.md \
+            || { echo "::error::docs/remember-me/threat-model.md missing 'RM-005: APPROVED' marker"; exit 1; }
+
+  gate:
+    runs-on: ubuntu-latest
+    needs: [contract-invariants, build-and-test, threat-model-approved]
+    steps:
+      - run: echo "remember-me-gate green"
