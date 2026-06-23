@@ -1,0 +1,85 @@
+# Security Gate Job — drop-in for checkout-canary-promote.yml
+#
+# WHERE: Add as a NEW top-level job in .github/workflows/checkout-canary-promote.yml.
+#        Wire as a required `needs:` for every promote-* job (dark, 1pct, 10pct, 50pct, 100pct).
+#        This job re-runs at the start of EVERY stage — flipping a ☐ mid-rollout (e.g. P0 regression)
+#        will halt further promotion at the next stage boundary.
+#
+# WHY split from grep-only snippet: We also block on (a) missing file, (b) any P0 entry that
+# was deleted instead of resolved, (c) sign-off matrix incomplete for the deploying stage.
+
+security-gate:
+  name: P0 Security Gate (binding)
+  runs-on: ubuntu-latest
+  permissions:
+    contents: read
+  outputs:
+    p0_open: ${{ steps.scan.outputs.p0_open }}
+    p1_open: ${{ steps.scan.outputs.p1_open }}
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 1
+
+    - name: Verify gate doc exists
+      run: |
+        test -f docs/security/preprod-security-gate.md || {
+          echo "::error::docs/security/preprod-security-gate.md missing — security-hardening-squad owns this file"
+          exit 1
+        }
+
+    - name: Verify P0 GATE-1..8 rows present (anti-deletion)
+      run: |
+        for i in 1 2 3 4 5 6 7 8; do
+          grep -qE "^\| \*\*GATE-${i}\*\*" docs/security/preprod-security-gate.md || {
+            echo "::error::GATE-${i} row missing from preprod-security-gate.md — cannot delete to bypass"
+            exit 1
+          }
+        done
+
+    - name: Scan for unchecked P0 items
+      id: scan
+      run: |
+        # P0 blocking — any ☐ on GATE-1..8 fails the build
+        p0_open=$(grep -cE '^\| \*\*GATE-[1-8]\*\*.*☐' docs/security/preprod-security-gate.md || true)
+        p1_open=$(grep -cE '^\| GATE-(9|1[0-3]) .*☐' docs/security/preprod-security-gate.md || true)
+        echo "p0_open=${p0_open}" >> "$GITHUB_OUTPUT"
+        echo "p1_open=${p1_open}" >> "$GITHUB_OUTPUT"
+
+        echo "## Security Gate Report" >> "$GITHUB_STEP_SUMMARY"
+        echo "- P0 open (blocking): **${p0_open}**" >> "$GITHUB_STEP_SUMMARY"
+        echo "- P1 open (7-day SLA): **${p1_open}**" >> "$GITHUB_STEP_SUMMARY"
+
+        if [ "${p0_open}" -gt 0 ]; then
+          echo "::error::${p0_open} P0 security gate item(s) unchecked — blocking promotion"
+          grep -nE '^\| \*\*GATE-[1-8]\*\*.*☐' docs/security/preprod-security-gate.md | \
+            sed 's/^/::error file=docs\/security\/preprod-security-gate.md,line=/'
+          exit 1
+        fi
+
+    - name: Verify sign-off matrix for production stage
+      if: ${{ inputs.stage == '100pct' || inputs.stage == '50pct' }}
+      run: |
+        # All four sign-off rows must be ✅ before traffic >= 50%
+        for owner in "security-hardening-squad" "review-deployment-squad" "app-development-squad" "azure-infrastructure-squad"; do
+          if grep -qE "^- ${owner}: ☐" docs/security/preprod-security-gate.md; then
+            echo "::error::${owner} sign-off missing — required before stage ${{ inputs.stage }}"
+            exit 1
+          fi
+        done
+
+    - name: Verify gate evidence freshness (90d cap)
+      run: |
+        # Doc must have been updated within 90 days — stale gates auto-fail
+        last_updated=$(grep -E '^\*\*Last updated:\*\*' docs/security/preprod-security-gate.md | \
+          sed -E 's/.*\*\*Last updated:\*\* ([0-9-]+).*/\1/')
+        if [ -z "${last_updated}" ]; then
+          echo "::error::Last updated date missing from preprod-security-gate.md"
+          exit 1
+        fi
+        age_days=$(( ( $(date +%s) - $(date -d "${last_updated}" +%s) ) / 86400 ))
+        echo "Gate doc age: ${age_days} days (last updated ${last_updated})"
+        if [ "${age_days}" -gt 90 ]; then
+          echo "::error::Security gate doc stale (${age_days} days > 90d cap) — requires security re-attestation"
+          exit 1
+        fi

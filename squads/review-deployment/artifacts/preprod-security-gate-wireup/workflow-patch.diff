@@ -1,0 +1,39 @@
+# Patch for .github/workflows/checkout-canary-promote.yml
+#
+# Adds security-gate as required dependency for every promote-* job.
+# Apply after security-gate-job.yml block is merged into the workflow's jobs: map.
+
+--- a/.github/workflows/checkout-canary-promote.yml
++++ b/.github/workflows/checkout-canary-promote.yml
+@@ -1,6 +1,7 @@
+ jobs:
++  security-gate:
++    # See security-gate-job.yml — paste full job spec here
++
+   promote-dark:
++    needs: [security-gate]
+     environment: checkout-canary-dark
+     # ... existing dark deploy steps
+
+   promote-1pct:
+-    needs: [promote-dark]
++    needs: [promote-dark, security-gate]
+     environment: checkout-canary-1pct
+     # ... gates BUG-1, BUG-2, confirmation 6-gate probe
+
+   promote-10pct:
+-    needs: [promote-1pct]
++    needs: [promote-1pct, security-gate]
+     environment: checkout-canary-10pct
+
+   promote-50pct:
+-    needs: [promote-10pct]
++    needs: [promote-10pct, security-gate]
+     environment: checkout-canary-50pct
+     # security-gate re-evaluates sign-off matrix at this stage
+
+   promote-100pct:
+-    needs: [promote-50pct]
++    needs: [promote-50pct, security-gate]
+     environment: checkout-canary-100pct
+     # security-gate re-evaluates sign-off matrix at this stage
