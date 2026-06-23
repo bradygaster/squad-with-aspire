@@ -118,19 +118,32 @@ public static class CorpusLoader
     /// Canonical signal is <c>category == "benign"</c>. The <c>b-*</c> id prefix is a
     /// secondary convention and may not hold for all future entries.
     /// </summary>
-    public static bool IsBenign(CorpusEntry e) =>
-        string.Equals(e.Category, BenignCategory, System.StringComparison.OrdinalIgnoreCase);
+    public static bool IsBenign(CorpusEntry e)
+    {
+        ArgumentNullException.ThrowIfNull(e);
+        return string.Equals(e.Category, BenignCategory, System.StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>All benign control payloads.</summary>
-    public static IEnumerable<CorpusEntry> Benign(this CorpusDocument doc) =>
-        doc.Payloads.Where(IsBenign);
+    public static IEnumerable<CorpusEntry> Benign(this CorpusDocument doc)
+    {
+        ArgumentNullException.ThrowIfNull(doc);
+        return doc.Payloads.Where(IsBenign);
+    }
 
     /// <summary>All adversarial payloads (everything that is not benign).</summary>
-    public static IEnumerable<CorpusEntry> Adversarial(this CorpusDocument doc) =>
-        doc.Payloads.Where(p => !IsBenign(p));
+    public static IEnumerable<CorpusEntry> Adversarial(this CorpusDocument doc)
+    {
+        ArgumentNullException.ThrowIfNull(doc);
+        return doc.Payloads.Where(p => !IsBenign(p));
+    }
 
     /// <summary>Adversarial payloads at a given severity (case-insensitive).</summary>
-    public static IEnumerable<CorpusEntry> AdversarialBySeverity(this CorpusDocument doc, string severity) =>
-        doc.Adversarial().Where(p =>
+    public static IEnumerable<CorpusEntry> AdversarialBySeverity(this CorpusDocument doc, string severity)
+    {
+        ArgumentNullException.ThrowIfNull(doc);
+        ArgumentNullException.ThrowIfNull(severity);
+        return doc.Adversarial().Where(p =>
             string.Equals(p.Severity, severity, System.StringComparison.OrdinalIgnoreCase));
+    }
 }
