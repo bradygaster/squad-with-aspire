@@ -1,0 +1,130 @@
+name: Squad CI (Windows preflight)
+
+# Dedicated Windows job for #1372 — copilot shim resolution.
+# Runs in parallel with squad-ci.yml. Required check before merging PRs that touch
+# packages/squad-cli/src/cli/util/copilot-cli.ts or commands/{loop,triage,doctor,monitor-*,watch}/*.
+
+on:
+  pull_request:
+    branches: [dev, preview, main]
+    paths:
+      - 'packages/squad-cli/src/cli/util/copilot-cli.ts'
+      - 'packages/squad-cli/src/cli/commands/**'
+      - 'packages/squad-cli/test/**'
+      - '.github/workflows/squad-ci-windows.yml'
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preflight-windows:
+    name: preflight (${{ matrix.os }} / node ${{ matrix.node }} / ${{ matrix.shim }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-2022]
+        node: [20, 22]
+        # Each shim variant exercises a different PATHEXT resolution path.
+        shim: [cmd, ps1, exe-missing]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+          cache: 'npm'
+
+      - name: Show shell + PATHEXT
+        shell: pwsh
+        run: |
+          $PSVersionTable
+          Write-Host "PATHEXT=$env:PATHEXT"
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Build squad-cli
+        run: npm run -w packages/squad-cli build
+
+      - name: Stage fake copilot shim (${{ matrix.shim }})
+        shell: pwsh
+        run: |
+          $shimDir = Join-Path $env:RUNNER_TEMP 'shims'
+          New-Item -ItemType Directory -Force -Path $shimDir | Out-Null
+          switch ('${{ matrix.shim }}') {
+            'cmd' {
+              @'
+@echo off
+echo copilot version 0.0.0-fake
+'@ | Out-File -Encoding ascii (Join-Path $shimDir 'copilot.cmd')
+            }
+            'ps1' {
+              @'
+#!/usr/bin/env pwsh
+Write-Host "copilot version 0.0.0-fake"
+'@ | Out-File -Encoding utf8 (Join-Path $shimDir 'copilot.ps1')
+            }
+            'exe-missing' {
+              # Intentionally stage nothing — fatal() path must surface the new
+              # docs/errors/copilot-cli-missing.md copy with {{TRIED}} block.
+            }
+          }
+          "$shimDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Run preflight unit tests
+        run: npm run -w packages/squad-cli test -- --run copilot-cli
+
+      - name: Run preflight integration test (resolves shim)
+        if: matrix.shim != 'exe-missing'
+        shell: pwsh
+        run: |
+          node packages/squad-cli/dist/cli.js doctor --json | Tee-Object -FilePath doctor.json
+          $j = Get-Content doctor.json | ConvertFrom-Json
+          if (-not $j.copilot.resolved) { throw "copilot shim was not resolved (matrix shim=${{ matrix.shim }})" }
+          if ($j.copilot.command -notmatch 'copilot\.(cmd|ps1)$') { throw "unexpected resolved command: $($j.copilot.command)" }
+
+      - name: Negative test (exe-missing must fail with new error copy)
+        if: matrix.shim == 'exe-missing'
+        shell: pwsh
+        run: |
+          $env:NO_COLOR = '1'
+          $out = node packages/squad-cli/dist/cli.js loop --preflight-only 2>&1
+          $exit = $LASTEXITCODE
+          Write-Host "---stdout/stderr---"
+          Write-Host $out
+          Write-Host "---end---"
+          if ($exit -eq 0) { throw "expected non-zero exit when copilot missing" }
+          if ($out -notmatch 'Copilot CLI required') { throw "missing headline from docs/errors/copilot-cli-missing.md" }
+          if ($out -notmatch 'What we tried') { throw "missing {{TRIED}} block" }
+          if ($out -notmatch 'copilot --version') { throw "tried-list did not include copilot --version" }
+
+      - name: Grep guard — no bare execFile('copilot' outside util
+        shell: pwsh
+        run: |
+          $bad = Get-ChildItem -Recurse -Include *.ts packages/squad-cli/src/cli/commands |
+            Select-String -Pattern "execFile\(\s*['""]copilot['""]" -SimpleMatch:$false
+          if ($bad) {
+            $bad | ForEach-Object { Write-Host $_.Path":"$_.LineNumber" "$_.Line }
+            throw "Bare execFile('copilot', ...) call found outside shared util. Use resolveCopilotCmd()."
+          }
+
+  required:
+    name: preflight-windows required
+    needs: preflight-windows
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gate
+        run: |
+          if [ "${{ needs.preflight-windows.result }}" != "success" ]; then
+            echo "::error::Windows preflight matrix failed — blocking merge of #1372 fix."
+            exit 1
+          fi
