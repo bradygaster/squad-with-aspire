@@ -39,9 +39,10 @@ below — a patch is missing.
 | # | Patch                                       | Origin commit                                          | Status                                  |
 | - | ------------------------------------------- | ------------------------------------------------------ | --------------------------------------- |
 | 1 | DM-001 design-tokens + ThemeToggle refinement | `squad-with-aspire@c31d897` (`upstream-transplants/dark-mode-DM-001/`) | applied to PR #28 ✅                    |
-| 2 | DM-002 + DM-003 ThemeProvider + no-FOUC      | `squad-with-aspire@66f1d70` (`upstream-transplants/dark-mode-DM-002-DM-003/APPLY.md`) | **awaiting app-dev v2 (storage-key rev)** ⏳ |
-| 3 | DM-002/DM-003 storage-key rev `ta.theme` → `ta:theme:v1` | (forthcoming from app-dev, subject prefix `fix(dark-mode): rename storage key`) | **REQUIRED before merge** ⏳            |
-| 4 | XD contrast matrix doc append                | `travel-assistant@8a17db7` (branch `xd/dm-001-contrast-matrix`) | **REQUIRED after patch 3, before merge** ⏳ |
+| 2 | DM-002 + DM-003 ThemeProvider + no-FOUC      | `squad-with-aspire@66f1d70` updated by today's APPLY.md edit → points at `eef7251` (`upstream-transplants/dark-mode-DM-002-DM-003/APPLY.md`) | **READY** ✅ |
+| 3 | DM-002/DM-003 storage-key rev `ta.theme` → `ta:theme:v1` | **merged into patch 2** — `eef7251` is the v2 commit (9-file diff, +26/−26) staged at app-dev session `c93377a2-…/files/0001-DM-002-DM-003-storage-key-v2.patch` (12,289 B). APPLY-v2-storage-key.md at squad-with-aspire@`7a0d1f0` also covers this. | **READY** ✅ |
+| 4 | XD contrast matrix doc append                | `travel-assistant@8a17db7` (branch `xd/dm-001-contrast-matrix`) | **REQUIRED before merge** ⏳ |
+| 5 *(optional, recommended)* | DM-006 sec-hard CSP wiring   | `feature/dm-002-dm-003-theme-toggle@9fd96dc` on top of `eef7251` (4 files, +275 LOC: csp.ts, middleware.ts, csp.test.ts, .semgrep/dark-mode-storage.yml). Cherry-pick alongside patch 2 to close DM-005 §8 CSP item in v0.5.0. | available ✅ |
 
 > Reconcile rationale: `RECONCILE-storage-key.md` (`squad-with-aspire@6ac4eca`).
 > Order rationale: `INTEGRATION-ORDER.md` (`squad-with-aspire@792998c`).
@@ -218,7 +219,7 @@ After v0.5.0 is live and smoke passes, file these (pre-approved titles):
 | ---------------------------------- | ------------------------------------------------------------ | ------ |
 | ideation-research-planning         | PRD `specs/dark-mode/PRD.md` + IRP-ratified D1/D2/D3         | ✅      |
 | experience-design                  | `c31d897` (DM-001 refinement) + `8a17db7` (contrast matrix)  | ✅      |
-| application-development            | `66f1d70` (DM-002/003) + v2 storage-key rev (incoming)       | ⏳ v2   |
+| application-development            | `eef7251` (DM-002/003 v2 storage-key rev, supersedes `66f1d70` doc target of `b831f26`)       | ✅      |
 | quality-testing                    | `c6b3de4` (DM-004 + storage-key reconcile, 21 tests green)   | ✅      |
 | security-hardening                 | `.semgrep/no-fouc-contract.yml` + DM-005 CSP hash linkage    | ✅      |
 | azure-infrastructure               | N/A for v0.5.0 (DM-006 deferred to follow-up)                | ⊘      |
