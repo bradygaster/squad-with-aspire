@@ -1,0 +1,11 @@
+{
+  "name": "@squad/auth-ui-contracts",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Pure helpers implementing the auth UI behavior contracts (verify-email + rate-limit). Framework-agnostic.",
+  "type": "module",
+  "exports": {
+    "./rate-limit": "./src/rate-limit.ts",
+    "./verify-email": "./src/verify-email.ts"
+  }
+}
