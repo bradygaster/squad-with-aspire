@@ -100,3 +100,63 @@ rules:
       Companion ESLint rule available in packages/squad-eslint-plugin (planned).
       Add `"@squad/no-shell-true-with-tainted-args": "error"` to your ESLint config
       to enforce this in editors that don't run semgrep.
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Rule 4 (added per app-dev request in #1372 patchset handoff): the centralized
+  # `copilot-cli.ts` util MUST keep a static argv contract. Any extension of its
+  # exported functions to accept caller-supplied args re-opens the argument-
+  # injection surface that the #1372 fix closed. Pin the contract.
+  # ─────────────────────────────────────────────────────────────────────────────
+  - id: no-spread-args-in-copilot-cli
+    languages: [typescript, javascript]
+    severity: ERROR
+    paths:
+      include:
+        - "packages/squad-cli/src/cli/util/copilot-cli.ts"
+        - "packages/squad-cli/src/cli/util/copilot-cli.js"
+    message: |
+      `copilot-cli.ts` exports (`resolveCopilotCmd`, `checkCopilotCli`) MUST use a STATIC
+      argv array — currently `['--version']`. Spreading caller-supplied args, accepting a
+      variadic argv parameter, or constructing argv from variables is forbidden in this file.
+
+      Reason: this util runs with `shell: IS_WINDOWS` so cmd.exe can resolve the `.cmd` shim
+      via PATHEXT. When `shell:true` is active on Windows, Node does NOT escape arguments —
+      any caller-controlled token can inject `&`, `|`, `;`, `>`, backticks, etc. The static
+      `['--version']` argv is the invariant that makes `shell: IS_WINDOWS` safe here.
+
+      If you need a new copilot subcommand probe, add a NEW exported function in this file
+      with its own hardcoded argv. Do not generalize.
+
+      See SECURITY.md "Trust Boundaries" and analysis/squad-1372/stride-shellout.md.
+    metadata:
+      category: security
+      cwe: "CWE-88: Argument Injection"
+      references:
+        - "https://github.com/bradygaster/squad/issues/1372"
+    pattern-either:
+      # Forbid spreading any identifier into the args array of execFile/execFileSync/spawn.
+      - patterns:
+          - pattern-either:
+              - pattern: child_process.execFile($CMD, [..., ...$ARGS, ...], ...)
+              - pattern: child_process.execFileSync($CMD, [..., ...$ARGS, ...], ...)
+              - pattern: child_process.spawn($CMD, [..., ...$ARGS, ...], ...)
+              - pattern: execFile($CMD, [..., ...$ARGS, ...], ...)
+              - pattern: execFileSync($CMD, [..., ...$ARGS, ...], ...)
+              - pattern: spawn($CMD, [..., ...$ARGS, ...], ...)
+      # Forbid passing a non-literal as the args array.
+      - patterns:
+          - pattern-either:
+              - pattern: child_process.execFile($CMD, $ARGS, ...)
+              - pattern: child_process.execFileSync($CMD, $ARGS, ...)
+              - pattern: child_process.spawn($CMD, $ARGS, ...)
+              - pattern: execFile($CMD, $ARGS, ...)
+              - pattern: execFileSync($CMD, $ARGS, ...)
+              - pattern: spawn($CMD, $ARGS, ...)
+          - pattern-not: |
+              $FN($CMD, ['--version'], ...)
+          - pattern-not: |
+              $FN($CMD, [], ...)
+          - metavariable-pattern:
+              metavariable: $ARGS
+              patterns:
+                - pattern-not-regex: '^\[.*\]$'
