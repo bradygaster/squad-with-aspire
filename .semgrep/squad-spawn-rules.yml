@@ -1,0 +1,102 @@
+rules:
+  - id: squad-no-shell-true-with-tainted-args
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: |
+      Do not pass `shell: true` (or `shell: IS_WINDOWS`) to child_process.execFile / spawn / exec
+      when the args array contains any non-literal expression. On Windows, `shell:true` causes
+      Node to delegate to `cmd.exe /d /s /c` which performs NO escaping of `& | ; ^ < > ( ) "`
+      in arg-array form, enabling command injection from any tainted input.
+
+      Use the resolved absolute path of the binary (via `resolveCopilotCmd()` / `where.exe`) and
+      keep `shell: false` (the default). If you genuinely need shell semantics, build the entire
+      string manually with proper quoting and accept all the risk in a comment block above the call.
+
+      See: analysis/squad-1372/stride-shellout.md, GitHub bradygaster/squad#1372.
+    metadata:
+      category: security
+      cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command"
+      owasp: "A03:2021 - Injection"
+      references:
+        - https://nodejs.org/api/child_process.html#shell-requirements
+        - https://github.com/bradygaster/squad/issues/1372
+    patterns:
+      - pattern-either:
+          - pattern: child_process.execFile($CMD, [..., $TAINT, ...], { ..., shell: true, ... })
+          - pattern: child_process.execFile($CMD, [..., $TAINT, ...], { ..., shell: $WIN, ... })
+          - pattern: child_process.execFileSync($CMD, [..., $TAINT, ...], { ..., shell: true, ... })
+          - pattern: child_process.spawn($CMD, [..., $TAINT, ...], { ..., shell: true, ... })
+          - pattern: child_process.spawnSync($CMD, [..., $TAINT, ...], { ..., shell: true, ... })
+          - pattern: execFile($CMD, [..., $TAINT, ...], { ..., shell: true, ... })
+          - pattern: execFile($CMD, [..., $TAINT, ...], { ..., shell: $WIN, ... })
+          - pattern: execFileSync($CMD, [..., $TAINT, ...], { ..., shell: true, ... })
+          - pattern: spawn($CMD, [..., $TAINT, ...], { ..., shell: true, ... })
+          - pattern: spawnSync($CMD, [..., $TAINT, ...], { ..., shell: true, ... })
+      - metavariable-pattern:
+          metavariable: $TAINT
+          patterns:
+            - pattern-not: '"..."'
+            - pattern-not: "'...'"
+            - pattern-not: "`...`"  # template literal with NO interpolation
+            - pattern-not: $LITERAL_IDENT_FROM_CONST_STRING_ARRAY
+
+  - id: squad-no-bare-copilot-execfile
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: |
+      Do not invoke `copilot` by bare name in child_process. Resolve via the shared
+      `resolveCopilotCmd()` / `checkCopilotCli()` utilities in
+      packages/squad-cli/src/cli/util/copilot-cli.ts. Bare-name resolution on Windows is
+      PATHEXT-driven and vulnerable to PATH hijacking
+      (see analysis/squad-1372/path-hijack-risk.md).
+    metadata:
+      category: security
+      cwe: "CWE-427: Uncontrolled Search Path Element"
+      references:
+        - https://github.com/bradygaster/squad/issues/1372
+    pattern-either:
+      - pattern: child_process.execFile("copilot", ...)
+      - pattern: child_process.execFileSync("copilot", ...)
+      - pattern: child_process.exec("copilot ...", ...)
+      - pattern: child_process.execSync("copilot ...", ...)
+      - pattern: child_process.spawn("copilot", ...)
+      - pattern: child_process.spawnSync("copilot", ...)
+      - pattern: execFile("copilot", ...)
+      - pattern: execFileSync("copilot", ...)
+      - pattern: execSync("copilot ...", ...)
+      - pattern: spawn("copilot", ...)
+      - pattern: spawnSync("copilot", ...)
+
+  - id: squad-no-string-split-as-spawn-args
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: |
+      Splitting a single string (env var, CLI flag, user input) into spawn args via
+      `.split(/\s+/)` or similar is dangerous when combined with `shell:true`. Shell metacharacters
+      survive the split and are interpreted by cmd.exe. Validate each token against an allow-list
+      regex (e.g. /^--?[a-z][a-z0-9-]*$/i for flag names) or accept structured input (string[]) from
+      the operator instead of a single string.
+    metadata:
+      category: security
+      cwe: "CWE-88: Argument Injection"
+    pattern-either:
+      - pattern: |
+          $FLAGS.split($_)
+      - pattern: |
+          $FLAGS.split(/\s+/)
+    pattern-inside: |
+      child_process.$FN($CMD, ..., { ..., shell: $S, ... })
+
+  # ESLint-style companion rule (information only — duplicates above for teams that prefer eslint).
+  - id: squad-eslint-no-shell-true-companion
+    languages: [generic]
+    severity: INFO
+    paths:
+      include:
+        - "**/.eslintrc*"
+        - "**/eslint.config.*"
+    pattern: "shell-no-restricted-spawn-rule-loaded"
+    message: |
+      Companion ESLint rule available in packages/squad-eslint-plugin (planned).
+      Add `"@squad/no-shell-true-with-tainted-args": "error"` to your ESLint config
+      to enforce this in editors that don't run semgrep.
