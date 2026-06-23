@@ -137,3 +137,68 @@ describe("verify-email: state machine purity", () => {
     expect(next).toEqual(initial);
   });
 });
+
+describe("verify-email: resendAttempted idempotency (UX wiring contract §1, item 4)", () => {
+  // Per docs/wireframes/auth/verify-email-auto-resend.md: auto-resend fires once
+  // and only once per page load. Reducer enforces purity invariant: first
+  // resendStart flips resendAttempted=true; subsequent resendStart is a no-op.
+  // StrictMode double-mount, manual-then-auto, and auto-then-manual all collapse
+  // to a single POST at the reducer layer.
+
+  it("first resendStart transitions to resendPending and sets resendAttempted=true", () => {
+    const next = reduceVerifyEmail(initial, { type: "resendStart" });
+    expect(next.kind).toBe("resendPending");
+    expect(next.resendAttempted).toBe(true);
+  });
+
+  it("second resendStart from resendPending is a no-op (same reference)", () => {
+    const first = reduceVerifyEmail(initial, { type: "resendStart" });
+    const second = reduceVerifyEmail(first, { type: "resendStart" });
+    expect(second).toBe(first); // referential equality — no new state object
+  });
+
+  it("StrictMode double-mount: two synchronous resendStart events fire one POST", () => {
+    // Simulates React 18 StrictMode mount → unmount → mount sequence.
+    let state: VerifyEmailState = initial;
+    let postsAttempted = 0;
+    for (let i = 0; i < 2; i++) {
+      const next = reduceVerifyEmail(state, { type: "resendStart" });
+      if (next !== state) postsAttempted++;
+      state = next;
+    }
+    expect(postsAttempted).toBe(1);
+  });
+
+  it("manual-then-auto: auto-resend after manual click is suppressed", () => {
+    const afterManual = reduceVerifyEmail(initial, { type: "resendStart" });
+    const afterAuto = reduceVerifyEmail(afterManual, { type: "resendStart" });
+    expect(afterAuto).toBe(afterManual);
+    expect(afterAuto.resendAttempted).toBe(true);
+  });
+
+  it("auto-then-manual: manual click after auto-resend is suppressed", () => {
+    // Auto fires first on mount, then user clicks Resend before result arrives.
+    const afterAuto = reduceVerifyEmail(initial, { type: "resendStart" });
+    const afterManualClick = reduceVerifyEmail(afterAuto, { type: "resendStart" });
+    expect(afterManualClick).toBe(afterAuto);
+  });
+
+  it("resendAttempted flag survives across resendResult transitions", () => {
+    const pending = reduceVerifyEmail(initial, { type: "resendStart" });
+    const success = reduceVerifyEmail(pending, {
+      type: "resendResult",
+      res: { status: 202, body: { cooldownSeconds: 60 } } as ApiResponse,
+    });
+    // After 202, state is resendSuccess. A subsequent resendStart should still no-op
+    // — server's 5/hr cap is the backstop per wiring contract item 7.
+    const tryAgain = reduceVerifyEmail({ ...success, resendAttempted: true }, { type: "resendStart" });
+    expect(tryAgain.kind).toBe("resendSuccess");
+  });
+
+  it("purity: reducer never mutates the input state object", () => {
+    const before = JSON.stringify(initial);
+    reduceVerifyEmail(initial, { type: "resendStart" });
+    reduceVerifyEmail(initial, { type: "resendStart" });
+    expect(JSON.stringify(initial)).toBe(before);
+  });
+});

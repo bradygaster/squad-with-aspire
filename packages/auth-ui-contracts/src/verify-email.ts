@@ -1,11 +1,12 @@
-export type VerifyEmailState =
+export type VerifyEmailState = (
   | { kind: "initial"; email: string }
   | { kind: "resendPending"; email: string }
   | { kind: "resendSuccess"; email: string; cooldownSeconds: number }
   | { kind: "resendRateLimited"; email: string; retryAfterSeconds: number; scope: "ip" | "account" | "global" }
   | { kind: "verifySuccess"; user: { id: string; email: string } }
   | { kind: "tokenInvalidOrExpired"; email: string; autoResendTriggered: boolean }
-  | { kind: "tokenUsed"; email: string };
+  | { kind: "tokenUsed"; email: string }
+) & { resendAttempted?: boolean };
 
 export type ApiResponse =
   | { status: 200; body: { verified: true; user: { id: string; email: string } } }
@@ -33,7 +34,8 @@ export function reduceVerifyEmail(
       return current;
     }
     case "resendStart":
-      return { kind: "resendPending", email };
+      if (current.resendAttempted) return current;
+      return { kind: "resendPending", email, resendAttempted: true };
     case "resendResult": {
       const { res } = event;
       if (res.status === 202) return { kind: "resendSuccess", email, cooldownSeconds: res.body.cooldownSeconds };
