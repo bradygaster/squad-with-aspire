@@ -15,7 +15,7 @@
 | 3    | DM-002 | application-development | `dm/002-theme-provider`  | full `dark-mode-gate` green            |
 | 4    | DM-003 | application-development | `dm/003-no-fouc`         | full `dark-mode-gate` + DM-005 CSP hash present |
 | 5    | DM-004 | quality-testing  | `dm/004-test-suite`              | runs in parallel with DM-002/003; gates them green |
-| 6    | DM-006 | azure-infrastructure | `dm/006-telemetry`           | **optional** — may be deferred to v0.5.1 |
+| 6    | DM-006 | azure-infrastructure | _n/a_                        | **DEFERRED** — no browser telemetry pipeline in repo (no Aspire AppHost, no App Insights/OTel web SDK in `apps/web`, no `instrumentation-client.ts`). Tracked as az-infra follow-up; not blocking v0.5.0. |
 
 Reviewer rule: any squad may review; **only review-deployment-squad squashes**. Exact squash subject:
 
@@ -34,7 +34,7 @@ Branch protection JSON payload available at `docs/dark-mode/branch-protection.js
 
 ## 3. Release steps
 
-1. Confirm all 5 required PRs (DM-001..005) merged into `main` with green `gate`.
+1. Confirm all 5 required PRs (DM-001..005) merged into `main` with green `gate`. **DM-006 is deferred** — do not block on it.
 2. From `main`:
    ```bash
    cd apps/web
@@ -61,6 +61,8 @@ Travel-assistant now ships a three-state theme toggle.
 - **Tokens-only** — all colors come from CSS variables; no component owns a literal hex.
 
 No flag, no migration. Hard-reload after upgrading clears any stale cache.
+
+**Telemetry:** `ui.theme.changed` event is **not emitted** in this release; client-side telemetry pipeline is a tracked follow-up (owner: azure-infrastructure-squad). Server-side feature behavior is unaffected.
 ```
 
 ## 5. Post-merge smoke test (15 min, incognito window required)
@@ -107,7 +109,7 @@ CSS variables are additive; no DB migration; no infra change. **No data loss pos
 | application-development     | DM-002 provider/toggle            | pending  |
 | application-development     | DM-003 no-FOUC inline script      | pending  |
 | quality-testing             | DM-004 test suite                 | pending  |
-| azure-infrastructure        | DM-006 telemetry *(deferrable)*   | optional |
+| azure-infrastructure        | DM-006 telemetry                  | **deferred** — no client telemetry pipeline; az-infra follow-up |
 | review-deployment (this doc) | DM-007 release captain           | **ready** |
 
 Flip cells to `green` in PR descriptions as each merges.
