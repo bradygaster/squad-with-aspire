@@ -152,15 +152,17 @@ Path scope: `**/retro/**`, `**/Retro/**`, `src/AspireWithSquad.Retro*/**`.
 
 ---
 
-## 6. Open contract decisions (need ack from app-dev + IRP)
+## 6. Contract decisions (DECIDED 2026-06-23 by IRP)
 
-| ID | Question | Recommendation |
-|---|---|---|
-| **D5-1** | Confirm 30d retention (vs IRP D5 default) | **Confirm**, with stricter `min(30d, retro_close+7d)` floor. |
-| **D5-2** | Author self-read audit? | **No** — author always has access to own posts; auditing creates noise. |
-| **D5-3** | Min cohort size for sentiment category in transcript | **2.** Singletons collapse to "other" to prevent de-anonymization. |
-| **D5-4** | LLM-generated action items: pass raw or aggregate? | **Aggregate only.** TR-003 synthesizer never sees raw text. |
-| **D5-5** | Facilitator can export raw posts to file? | **No.** Read-in-UI only; no bulk export path. Bypasses are CI-blocked (rule `no-bulk-raw-export`). |
+All five sub-decisions below were accepted as-written by ideation-research-planning-squad on 2026-06-23. These are binding contracts for TR-001/003/004 (app-dev) and TR-008 (QT). Changes require a new decision record.
+
+| ID | Question | Decision | Status |
+|---|---|---|---|
+| **D5-1** | Confirm 30d retention (vs IRP D5 default) | Stricter `min(30d, retro_close+7d)` floor — whichever is sooner. | **DECIDED** |
+| **D5-2** | Author self-read audit? | **No** — author always has access to own posts; auditing creates noise. Self-read is not a disclosure event. | **DECIDED** |
+| **D5-3** | Min cohort size for sentiment category in transcript | **2.** Singletons collapse to "other" to prevent re-identification. n=1 aggregates MUST be suppressed. | **DECIDED** |
+| **D5-4** | LLM-generated action items: pass raw or aggregate? | **Aggregate only.** TR-003 synthesizer never sees raw IC posts. This is the differentiator's privacy contract. | **DECIDED** |
+| **D5-5** | Facilitator can export raw posts to file? | **No** in v0.1.0. Read-in-UI only; no bulk export path. Deferred to v0.2 (single-retro audited path only, if at all). CI-blocked by `no-bulk-raw-export`. | **DECIDED** |
 
 ---
 
