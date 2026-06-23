@@ -1,0 +1,68 @@
+{
+  "name": "squad-1372-windows-repro",
+  "image": "mcr.microsoft.com/windows/servercore:ltsc2022",
+
+  "//": [
+    "Mode A: Windows host with Docker Desktop (Windows containers enabled).",
+    "Open this folder in VS Code; 'Reopen in Container' will pull the Server Core base",
+    "and provision Node 20 + pwsh 7 + gh + gh-copilot + the copilot shim onto PATH.",
+    "Mode B (Linux/macOS hosts): see analysis/squad-1372/windows-devcontainer.md for the",
+    "tmate-on-windows-runner fallback path; this devcontainer cannot run on a Linux kernel."
+  ],
+
+  "init": false,
+  "privileged": false,
+  "overrideCommand": false,
+
+  "runArgs": [
+    "--isolation=process",
+    "--memory=4g",
+    "--cpus=2"
+  ],
+
+  "containerEnv": {
+    "NODE_VERSION": "20.18.0",
+    "POWERSHELL_VERSION": "7.4.6",
+    "NO_COLOR": "1",
+    "SQUAD_1372_REPRO": "1"
+  },
+
+  "onCreateCommand": "pwsh -NoProfile -Command \"./.devcontainer/windows/provision.ps1\"",
+
+  "postCreateCommand": "pwsh -NoProfile -Command \"copilot --version; node -v; pwsh -v\"",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.powershell",
+        "dbaeumer.vscode-eslint",
+        "vitest.explorer",
+        "github.copilot"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.windows": "PowerShell 7",
+        "terminal.integrated.profiles.windows": {
+          "PowerShell 7": {
+            "path": "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+            "args": ["-NoLogo"]
+          },
+          "cmd": {
+            "path": "C:\\Windows\\System32\\cmd.exe"
+          }
+        },
+        "files.eol": "\r\n"
+      }
+    }
+  },
+
+  "remoteUser": "ContainerAdministrator",
+
+  "mounts": [
+    "source=${localWorkspaceFolder},target=C:\\workspace,type=bind,consistency=cached"
+  ],
+  "workspaceFolder": "C:\\workspace",
+
+  "forwardPorts": [],
+
+  "features": {}
+}

@@ -1,0 +1,154 @@
+name: squad-ci-windows-full (#1372 regression matrix)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/squad-cli/**'
+      - 'tests/regression/**'
+      - '.github/workflows/squad-ci-windows-full.yml'
+  pull_request:
+    paths:
+      - 'packages/squad-cli/**'
+      - 'tests/regression/**'
+      - '.github/workflows/squad-ci-windows-full.yml'
+  schedule:
+    # Weekly: catch GitHub runner image drift (pwsh / gh-copilot version bumps)
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-shim-matrix:
+    name: ${{ matrix.key }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - key: win2019-ps51
+            runner: windows-2019
+            shell: powershell
+            allow-failure: false
+          - key: win2019-pwsh7
+            runner: windows-2019
+            shell: pwsh
+            allow-failure: false
+          - key: win2022-pwsh7
+            runner: windows-2022
+            shell: pwsh
+            allow-failure: false
+          - key: win2022-cmd
+            runner: windows-2022
+            shell: cmd
+            allow-failure: false
+          - key: winarm-pwsh7
+            runner: windows-11-arm
+            shell: pwsh
+            # arm64: gh-copilot extension may not publish arm64 — allow failure until it does.
+            allow-failure: true
+          - key: ubuntu-baseline
+            runner: ubuntu-latest
+            shell: bash
+            allow-failure: false
+
+    continue-on-error: ${{ matrix.allow-failure }}
+
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Print shell + OS context
+        run: |
+          node -v
+          npm -v
+        # On windows-2019-ps51 this exercises PowerShell 5.1; on -pwsh7 cells it exercises 7.x.
+
+      - name: Provision copilot shim onto PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $shim = Join-Path $env:GITHUB_WORKSPACE 'tests\fixtures\copilot-shim'
+          New-Item -ItemType Directory -Force -Path $shim | Out-Null
+          # copilot.cmd — what cmd.exe / WPS resolve via PATHEXT
+          @"
+          @echo off
+          if "%1"=="--version" (echo copilot 0.0.0-test & exit /b 0)
+          echo copilot-shim: unhandled args %* 1>&2
+          exit /b 1
+          "@ | Set-Content -Encoding ASCII (Join-Path $shim 'copilot.cmd')
+          # copilot.ps1 — what pwsh-style invocations may pick up
+          @'
+          param([Parameter(ValueFromRemainingArguments=$true)]$args)
+          if ($args -and $args[0] -eq '--version') { 'copilot 0.0.0-test'; exit 0 }
+          [Console]::Error.WriteLine("copilot-shim: unhandled args $args"); exit 1
+          '@ | Set-Content -Encoding UTF8 (Join-Path $shim 'copilot.ps1')
+          echo "$shim" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Provision copilot shim onto PATH (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          shim="$GITHUB_WORKSPACE/tests/fixtures/copilot-shim"
+          mkdir -p "$shim"
+          cat > "$shim/copilot" <<'EOF'
+          #!/usr/bin/env bash
+          if [ "$1" = "--version" ]; then echo "copilot 0.0.0-test"; exit 0; fi
+          echo "copilot-shim: unhandled args $*" >&2; exit 1
+          EOF
+          chmod +x "$shim/copilot"
+          echo "$shim" >> "$GITHUB_PATH"
+
+      - name: Verify shim resolves
+        run: copilot --version
+
+      - name: Install
+        run: npm ci
+
+      - name: Run #1372 regression tests
+        run: npx vitest run tests/regression/copilot-cli-windows-shim.test.ts tests/regression/spawn-agent-shell-injection.test.ts tests/regression/copilot-cli-missing-message.test.ts tests/regression/copilot-cli-shared-util.test.ts
+        env:
+          NO_COLOR: '1'
+          FORCE_COLOR: '0'
+
+      - name: End-to-end smoke — squad CLI invokes copilot --version
+        # The original ENOENT canary. If this fails on a Windows cell, #1372 has regressed.
+        run: node packages/squad-cli/bin/squad.js preflight --check copilot
+
+      - name: Upload test artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-logs-${{ matrix.key }}
+          path: |
+            **/vitest-report*.json
+            **/npm-debug.log*
+          if-no-files-found: ignore
+          retention-days: 7
+
+  required-gate:
+    # Aggregate result so branch protection can require a single check.
+    name: windows-shim-matrix (gate)
+    needs: windows-shim-matrix
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any required cell failed
+        run: |
+          result='${{ needs.windows-shim-matrix.result }}'
+          echo "Matrix result: $result"
+          # allow-failure cells (winarm) don't affect the aggregate because continue-on-error
+          # masks them as success at the job level.
+          if [ "$result" != "success" ]; then exit 1; fi
