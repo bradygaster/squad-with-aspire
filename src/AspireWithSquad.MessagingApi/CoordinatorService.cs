@@ -21,6 +21,7 @@ public sealed class CoordinatorService : BackgroundService
     private readonly ISquadMessageBus _bus;
     private readonly ISquadConfigStore _config;
     private readonly IServiceProvider _services;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly SquadRegistry _registry;
     private readonly ILogger<CoordinatorService> _logger;
 
@@ -42,11 +43,12 @@ public sealed class CoordinatorService : BackgroundService
 
     private string[] AllSquads => _registry.Names;
 
-    public CoordinatorService(ISquadMessageBus bus, ISquadConfigStore config, IServiceProvider services, SquadRegistry registry, ILogger<CoordinatorService> logger)
+    public CoordinatorService(ISquadMessageBus bus, ISquadConfigStore config, IServiceProvider services, IServiceScopeFactory scopeFactory, SquadRegistry registry, ILogger<CoordinatorService> logger)
     {
         _bus = bus;
         _config = config;
         _services = services;
+        _scopeFactory = scopeFactory;
             _registry = registry;
             _logger = logger;
         }
@@ -318,7 +320,11 @@ public sealed class CoordinatorService : BackgroundService
 
         try
         {
-            var agent = _services.GetKeyedService<SquadAgent>("ideation");
+            // SquadAgent is registered as scoped in Squad.Agents.AI >= 0.5.1. Resolve from an
+            // async scope — SquadAgent only implements IAsyncDisposable, so a sync scope throws
+            // "Use DisposeAsync to dispose the container" when iterating scoped services on dispose.
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var agent = scope.ServiceProvider.GetKeyedService<SquadAgent>("ideation");
             if (agent is null)
             {
                 _logger.LogWarning("No ideation agent available for issue synthesis");
@@ -421,7 +427,11 @@ public sealed class CoordinatorService : BackgroundService
 
         try
         {
-            var agent = _services.GetKeyedService<SquadAgent>(squadName);
+            // SquadAgent is registered as scoped in Squad.Agents.AI >= 0.5.1. Use an async scope —
+            // SquadAgent only implements IAsyncDisposable. Keep the scope alive for the agent's
+            // RunAsync (the agent's lifetime is bounded by the scope).
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var agent = scope.ServiceProvider.GetKeyedService<SquadAgent>(squadName);
             if (agent is null)
             {
                 _logger.LogWarning("No SquadAgent registered for '{Squad}'", squadName);
