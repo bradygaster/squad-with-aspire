@@ -39,6 +39,11 @@ foreach (var squadName in squadNames)
     {
         options.ConfigureSession = session =>
         {
+            // Force the coordinator persona at .github/agents/squad.agent.md to load.
+            // Squad SDK 0.5.1 does not auto-set this; without it the CLI uses the
+            // default Copilot prompt and the coordinator never dispatches to named
+            // subagents via the `task` tool.
+            session.Agent = "squad";
             session.Tools ??= [];
             session.Tools.Add(CopilotTool.DefineTool(
                 async (string to, string body, string? subject) =>
@@ -61,6 +66,7 @@ foreach (var squadName in squadNames)
         {
             Console.WriteLine($"[{capturedName}] {traceEvent.Kind}: {traceEvent.SubagentName ?? ""} {traceEvent.RawEventType}");
         };
+        options.TraceEvents = true;
     });
 }
 
