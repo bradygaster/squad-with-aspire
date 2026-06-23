@@ -72,7 +72,7 @@ jobs:
           fi
 
   verify-gate:
-    name: Verify 11-item merge gate
+    name: Verify 14-item merge gate
     needs: detect
     if: needs.detect.outputs.should_release == 'true'
     runs-on: ubuntu-latest
@@ -86,11 +86,14 @@ jobs:
         run: |
           set -euo pipefail
           REQUIRED=(
-            "src/util/copilot-cli.ts"
-            "src/util/copilot-cli-missing-message.ts"
+            "packages/squad-cli/src/cli/util/copilot-cli.ts"
+            "packages/squad-cli/src/cli/util/copilot-cli-missing-message.ts"
             "docs/errors/copilot-cli-missing.md"
-            "tests/util/copilot-cli.test.ts"
+            "packages/squad-cli/tests/util/copilot-cli.test.ts"
             ".github/workflows/squad-ci-windows.yml"
+            ".github/workflows/security-static.yml"
+            ".semgrep/squad-spawn-rules.yml"
+            "SECURITY.md"
             "CHANGELOG.md"
           )
           missing=0
@@ -109,20 +112,61 @@ jobs:
       - name: Renderer wired into loop.ts
         shell: bash
         run: |
-          grep -E "renderCopilotMissingMessage|copilot-cli-missing-message" src/loop.ts
+          grep -E "renderCopilotMissingMessage|copilot-cli-missing-message" packages/squad-cli/src/cli/commands/loop.ts
 
       - name: Shared util has no caller-supplied args
         shell: bash
         run: |
           set -euo pipefail
-          if grep -nE 'execFile\([^)]*,\s*\[[^\]]*\$\{?[A-Za-z_]' src/util/copilot-cli.ts; then
+          if grep -nE 'execFile(Sync)?\([^)]*,\s*\[[^\]]*\$\{?[A-Za-z_]' packages/squad-cli/src/cli/util/copilot-cli.ts; then
             echo "::error::caller-supplied args detected in shared util"
             exit 1
           fi
 
       - name: timeout:5000 preserved
         shell: bash
-        run: grep -E 'timeout:\s*5000' src/util/copilot-cli.ts
+        run: grep -E 'timeout:\s*5_?000' packages/squad-cli/src/cli/util/copilot-cli.ts
+
+      - name: SECURITY.md Trust Boundaries section present
+        shell: bash
+        run: grep -E '^#+\s*Trust [Bb]oundaries' SECURITY.md
+
+      - name: Semgrep ruleset present with required rules
+        shell: bash
+        run: |
+          set -euo pipefail
+          for rule in no-shell-true-with-tainted-args no-bare-copilot-execfile no-string-split-as-spawn-args; do
+            if ! grep -q "$rule" .semgrep/squad-spawn-rules.yml; then
+              echo "::error::semgrep rule $rule missing"
+              exit 1
+            fi
+          done
+
+      - name: No bare execFile('copilot' outside shared util
+        shell: bash
+        run: |
+          set -euo pipefail
+          hits=$(grep -rnE "execFile(Sync)?\(\s*['\"]copilot" packages/squad-cli/src/cli/commands packages/squad-cli/src/cli/watch 2>/dev/null || true)
+          if [[ -n "$hits" ]]; then
+            echo "::error::bare execFile('copilot' found outside util/copilot-cli.ts:"
+            echo "$hits"
+            exit 1
+          fi
+
+      - name: Windows CI + security-static + ubuntu CI succeeded on merge commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          SHA="${{ needs.detect.outputs.sha }}"
+          for wf in squad-ci squad-ci-windows security-static; do
+            conclusion=$(gh run list --workflow "$wf" --commit "$SHA" --json conclusion --jq '.[0].conclusion' || echo "missing")
+            if [[ "$conclusion" != "success" ]]; then
+              echo "::error::$wf did not succeed on $SHA (got: $conclusion)"
+              exit 1
+            fi
+          done
 
   release:
     name: Cut patch release

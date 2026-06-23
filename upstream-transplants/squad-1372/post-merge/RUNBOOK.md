@@ -12,7 +12,7 @@ manual steps** for the maintainer beyond clicking "Merge".
 
 | File | Destination in `bradygaster/squad` | Purpose |
 |------|------------------------------------|---------|
-| `squad-release-1372.yml` | `.github/workflows/squad-release-1372.yml` | Auto-fires on the locked merge subject. Verifies the 11-item gate, bumps the patch version, tags, publishes to npm, creates the GitHub Release, closes #1372 with the tag link, and files the spawn-side hardening follow-up. |
+| `squad-release-1372.yml` | `.github/workflows/squad-release-1372.yml` | Auto-fires on the locked merge subject. Verifies the 14-item gate, bumps the patch version, tags, publishes to npm, creates the GitHub Release, closes #1372 with the tag link, and files the spawn-side hardening follow-up. |
 | `RUNBOOK.md` | _(this file — do not ship)_ | Maintainer instructions. |
 
 ## One-shot apply
@@ -35,7 +35,7 @@ trigger commit hits `main`.
 1. PR title and squash subject exactly match: `fix(cli): resolve copilot shim on Windows for loop preflight (#1372)`
 2. PR body contains `Closes #1372`
 3. Required checks green: `squad-ci`, `squad-ci-windows`
-4. 11-item gate (verified by `verify-gate` job too — belt + suspenders):
+4. 14-item gate (verified by `verify-gate` job too — belt + suspenders):
    - `src/util/copilot-cli.ts` exists
    - `src/util/copilot-cli-missing-message.ts` exists
    - `docs/errors/copilot-cli-missing.md` exists
@@ -68,7 +68,7 @@ the version bump so you can confirm the gate logic on real history.
 ## What automation does on the real merge
 
 1. **detect** — confirms the merge commit subject matches the locked string
-2. **verify-gate** — re-asserts the 11-item gate against the merged tree
+2. **verify-gate** — re-asserts the 14-item gate against the merged tree
 3. **release** —
    a. `npm version patch` → e.g. `v1.2.3` → `v1.2.4`
    b. commit + tag + push tag

@@ -159,7 +159,7 @@ The squash subject is **load-bearing** — `squad-release-1372.yml` keys on it t
 `squad-release-1372.yml` runs on push to `main`. Three jobs:
 
 1. **detect** — checks the latest commit subject matches the locked string. If not, exits cleanly (no-op).
-2. **verify-gate** — re-runs the 11-item checklist as scripted assertions. If any item fails, halts and pings the maintainer.
+2. **verify-gate** — re-runs the 14-item checklist as scripted assertions. If any item fails, halts and pings the maintainer.
 3. **release** — `npm version patch` → push tag → `npm publish` → `gh release create` with the CHANGELOG block → `gh issue close 1372` with the release tag URL → `gh issue create` for the pre-approved spawn-side `shell:true` security follow-up.
 
 **Secrets required:** `NPM_TOKEN` (npm automation token with publish on `@github/squad-cli`). Confirm it is present in `Settings → Secrets and variables → Actions` before you merge.

@@ -56,7 +56,7 @@ Patch release. Fixes a Windows-only crash where `squad loop` aborted on prefligh
 **Rollout**
 1. Squash-merge PR with the locked subject + `Closes #1372`.
 2. `squad-release-1372.yml` triggers on the merged subject:
-   - Re-verifies the 11-item merge gate.
+   - Re-verifies the 14-item merge gate.
    - `npm version patch`, push tag.
    - `npm publish` with `NPM_TOKEN`.
    - `gh release create` with this changelog block.

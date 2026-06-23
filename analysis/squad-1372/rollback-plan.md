@@ -135,7 +135,7 @@ After the revert lands and the prior good tag is back on `latest`:
 
 1. **Reproduce in CI.** Add the failing Windows variant to `squad-ci-windows.yml` matrix (e.g. add `windows-2019` or `windows-arm64` row).
 2. **Patch forward.** Open a new PR against `main` targeting `<NEW_GOOD_VERSION>` with the original #1372 fix **plus** the variant-specific shim resolution.
-3. **Re-run the merge gate.** The 11-item gate from `maintainer-handoff-final.md` § "Merge Contract" applies verbatim to the forward patch.
+3. **Re-run the merge gate.** The 14-item gate from `maintainer-handoff-final.md` § "Merge Contract" applies verbatim to the forward patch.
 4. **Close the regression issue** with a link to the new tag once published.
 
 ---
