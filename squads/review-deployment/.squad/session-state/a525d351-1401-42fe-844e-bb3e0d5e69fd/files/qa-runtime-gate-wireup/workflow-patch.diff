@@ -1,0 +1,30 @@
+# Patch: make every promote-* job require runtime-gate-p0
+# P1 is advisory (continue-on-error) so it does NOT block promotion.
+
+--- a/.github/workflows/checkout-canary-promote.yml
++++ b/.github/workflows/checkout-canary-promote.yml
+@@ -1,30 +1,30 @@
+   promote-dark:
+-    needs: [security-gate, deploy-dark]
++    needs: [security-gate, deploy-dark, runtime-gate-p0]
+     ...
+
+   promote-1pct:
+-    needs: [security-gate, promote-dark, contract-gate-bug1, contract-gate-bug2]
++    needs: [security-gate, runtime-gate-p0, promote-dark, contract-gate-bug1, contract-gate-bug2]
+     ...
+
+   promote-10pct:
+-    needs: [security-gate, promote-1pct, soak-1pct]
++    needs: [security-gate, runtime-gate-p0, promote-1pct, soak-1pct]
+     ...
+
+   promote-50pct:
+-    needs: [security-gate, promote-10pct, soak-10pct]
++    needs: [security-gate, runtime-gate-p0, promote-10pct, soak-10pct]
+     ...
+
+   promote-100pct:
+-    needs: [security-gate, promote-50pct, soak-50pct]
++    needs: [security-gate, runtime-gate-p0, promote-50pct, soak-50pct]
+     ...

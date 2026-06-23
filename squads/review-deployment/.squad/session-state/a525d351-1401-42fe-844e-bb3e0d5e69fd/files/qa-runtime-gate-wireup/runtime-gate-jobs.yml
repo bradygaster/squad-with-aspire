@@ -1,0 +1,105 @@
+# Drop-in jobs for .github/workflows/checkout-canary-promote.yml
+# Wire AFTER `security-gate` (checkbox grep) and BEFORE any `promote-*` job.
+# Both jobs run against the candidate revision URL (dark slot, no production traffic).
+
+  runtime-gate-p0:
+    name: "Gate 12: Runtime P0 (blocking)"
+    needs: [security-gate, deploy-dark]
+    runs-on: ubuntu-latest
+    environment: preprod-canary
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      CANARY_BASE_URL: ${{ needs.deploy-dark.outputs.revision_fqdn }}
+      ASPNETCORE_ENVIRONMENT: Production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Run P0 gate tests (fail-closed)
+        run: |
+          dotnet test tests/TravelAssistant.Api.Tests/TravelAssistant.Api.Tests.csproj \
+            --filter "Category=PreprodGate&Tier=P0" \
+            --logger "trx;LogFileName=gate-p0.trx" \
+            --logger "console;verbosity=detailed" \
+            --results-directory ./test-results \
+            -- RunConfiguration.TreatNoTestsAsError=true
+      - name: Upload P0 results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-gate-p0-results
+          path: ./test-results/gate-p0.trx
+      - name: Rollback on P0 failure
+        if: failure()
+        uses: ./.github/actions/checkout-rollback
+        with:
+          reason: "runtime-gate-p0 failure on revision ${{ needs.deploy-dark.outputs.revision_name }}"
+          app-config-endpoint: ${{ secrets.APP_CONFIG }}
+
+  runtime-gate-p1:
+    name: "Gate 13: Runtime P1 (advisory)"
+    needs: [runtime-gate-p0]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    environment: preprod-canary
+    permissions:
+      id-token: write
+      contents: read
+      issues: write
+    env:
+      CANARY_BASE_URL: ${{ needs.deploy-dark.outputs.revision_fqdn }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Run P1 gate tests (advisory)
+        id: p1
+        continue-on-error: true
+        run: |
+          dotnet test tests/TravelAssistant.Api.Tests/TravelAssistant.Api.Tests.csproj \
+            --filter "Category=PreprodGate&Tier=P1" \
+            --logger "trx;LogFileName=gate-p1.trx" \
+            --results-directory ./test-results
+      - name: Annotate P1 failures in Step Summary
+        if: always()
+        run: |
+          {
+            echo "## Gate 13 — P1 Runtime (advisory)"
+            echo ""
+            if [ "${{ steps.p1.outcome }}" = "failure" ]; then
+              echo "⚠️  One or more P1 gates failed. Canary continues; 7-day SLA clock starts."
+              echo "Issue auto-opened for tracking."
+            else
+              echo "✅ All P1 gates green."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Open SLA-tracking issue on P1 failure
+        if: steps.p1.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh issue create \
+            --repo tamirdresher/travel-assistant \
+            --title "P1 gate slippage on revision ${{ needs.deploy-dark.outputs.revision_name }}" \
+            --label "gate:p1-slippage,sla:7d" \
+            --body "Runtime P1 gates failed on canary. 7-day SLA starts $(date -Iseconds). See run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+      - name: Upload P1 results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-gate-p1-results
+          path: ./test-results/gate-p1.trx
