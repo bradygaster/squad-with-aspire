@@ -111,12 +111,9 @@ Release-captain v0.5.0 bundle (squad-with-aspire@`eb6b8c5`) locked storage key a
 - the no-FOUC script reads the wrong key on first paint → flash,
 - the contract-invariants gate job fails.
 
-**Decision needed before applying this patch:** which key wins?
+**DECISION LOCKED (2026-06-23, review-deployment-squad release captain):** `ta:theme:v1` wins. App-dev revs the patch. Full rationale + diff fragments + maintainer apply order in `RECONCILE-storage-key.md` (sibling file).
 
-- If **`ta:theme:v1`** (release-captain lock): app-dev must rev the patch — trivial 2-line change in `noFoucScript.ts` + `storage.ts` (DM-005). Preferred — version suffix protects against future schema breaks.
-- If **`ta.theme`** (app-dev's patch + DM-005's existing storage gate): release-captain doc updates the gate's invariant string.
-
-Maintainer: do **not** apply this patch until the key is reconciled. Ping sec-hard + app-dev via planning if needed.
+Maintainer: do **not** apply `b831f26` as-is. Wait for app-dev's revved patchset (subject prefix `fix(dark-mode): rename storage key`). Then apply per the updated order in RECONCILE-storage-key.md §"Maintainer apply order (updated)".
 
 ## Sign-off
 
