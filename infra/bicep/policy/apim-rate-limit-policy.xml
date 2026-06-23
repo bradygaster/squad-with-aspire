@@ -1,0 +1,73 @@
+<!--
+  Subagent: auth-rate-limit-infra
+  Backs experience-design-squad's docs/wireframes/auth/rate-limit-contract.md
+  Emits the exact { code, message, retryAfterSeconds, scope } body + Retry-After header
+  the UI countdown contract expects.
+
+  Per-endpoint defaults from security-hardening-squad:
+    POST /auth/login         -> 10 / 15min per IP
+    POST /auth/register      -> 5  / 1hr   per IP
+    POST /auth/resend-verify -> 6  / 1hr   per account (sub claim or email)
+    POST /auth/reset-request -> 3  / 1hr   per email
+-->
+<policies>
+  <inbound>
+    <base />
+    <choose>
+      <when condition="@(context.Request.Url.Path.EndsWith("/auth/login", StringComparison.OrdinalIgnoreCase))">
+        <rate-limit-by-key calls="10" renewal-period="900"
+                           counter-key="@(context.Request.IpAddress)" />
+        <set-variable name="rl_scope" value="ip" />
+        <set-variable name="rl_window" value="900" />
+      </when>
+      <when condition="@(context.Request.Url.Path.EndsWith("/auth/register", StringComparison.OrdinalIgnoreCase))">
+        <rate-limit-by-key calls="5" renewal-period="3600"
+                           counter-key="@(context.Request.IpAddress)" />
+        <set-variable name="rl_scope" value="ip" />
+        <set-variable name="rl_window" value="3600" />
+      </when>
+      <when condition="@(context.Request.Url.Path.EndsWith("/auth/resend-verify", StringComparison.OrdinalIgnoreCase))">
+        <rate-limit-by-key calls="6" renewal-period="3600"
+                           counter-key="@((string)context.Variables.GetValueOrDefault("accountKey", context.Request.IpAddress))" />
+        <set-variable name="rl_scope" value="account" />
+        <set-variable name="rl_window" value="3600" />
+      </when>
+      <when condition="@(context.Request.Url.Path.EndsWith("/auth/reset-request", StringComparison.OrdinalIgnoreCase))">
+        <rate-limit-by-key calls="3" renewal-period="3600"
+                           counter-key="@((string)context.Variables.GetValueOrDefault("emailKey", context.Request.IpAddress))" />
+        <set-variable name="rl_scope" value="email" />
+        <set-variable name="rl_window" value="3600" />
+      </when>
+    </choose>
+  </inbound>
+  <on-error>
+    <choose>
+      <when condition="@(context.LastError.Reason == "RateLimitExceeded" || context.Response?.StatusCode == 429)">
+        <return-response>
+          <set-status code="429" reason="Too Many Requests" />
+          <set-header name="Retry-After" exists-action="override">
+            <value>@((string)context.Variables.GetValueOrDefault("rl_window", "60"))</value>
+          </set-header>
+          <set-header name="Content-Type" exists-action="override">
+            <value>application/json; charset=utf-8</value>
+          </set-header>
+          <set-body>@{
+            var scope = (string)context.Variables.GetValueOrDefault("rl_scope", "ip");
+            var retry = int.Parse((string)context.Variables.GetValueOrDefault("rl_window", "60"));
+            var msg = scope == "account" ? "Too many requests for this account. Please wait before trying again."
+                    : scope == "email"   ? "Too many requests for this email. Please wait before trying again."
+                                         : "Too many requests. Please wait before trying again.";
+            return new JObject(
+              new JProperty("code", "RATE_LIMITED"),
+              new JProperty("message", msg),
+              new JProperty("retryAfterSeconds", retry),
+              new JProperty("scope", scope)
+            ).ToString();
+          }</set-body>
+        </return-response>
+      </when>
+    </choose>
+  </on-error>
+  <outbound><base /></outbound>
+  <backend><base /></backend>
+</policies>
