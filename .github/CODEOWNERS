@@ -1,0 +1,22 @@
+# CODEOWNERS for bradygaster/squad-with-aspire
+# Reviews are required from listed owners (when branch protection enforces it).
+# Squads are tracked as comments; maintainer @bradygaster is the human approver.
+
+# Default fallback
+*                                                       @bradygaster
+
+# Team-retro feature surface (TR-001/TR-003/TR-004 PR scope)
+packages/aspire-retro/**                                @bradygaster  # app-dev + review-deployment
+specs/team-retro/**                                     @bradygaster  # ideation-research-planning
+docs/wireframes/team-retro/**                           @bradygaster  # experience-design
+.github/ISSUE_TEMPLATE/retro-action.yml                 @bradygaster  # experience-design + app-dev
+
+# Security-sensitive surfaces — security-static.yml MUST pass
+.semgrep/**                                             @bradygaster  # security-hardening
+.github/workflows/security-static.yml                   @bradygaster  # security-hardening + review-deployment
+.github/workflows/**                                    @bradygaster  # review-deployment
+SECURITY.md                                             @bradygaster  # security-hardening
+
+# Anything that spawns subprocesses or shells out — TR-003 dispatch falls here
+packages/aspire-retro/src/cli/**                        @bradygaster
+packages/aspire-retro/src/dispatch/**                   @bradygaster
