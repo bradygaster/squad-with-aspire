@@ -19,7 +19,10 @@ jobs:
       - name: Run semgrep
         uses: semgrep/semgrep-action@v1
         with:
-          config: .semgrep/squad-spawn-rules.yml
+          config: >-
+            .semgrep/squad-spawn-rules.yml
+            .semgrep/retro-privacy.yml
+            .semgrep/auth-ui-token-hygiene.yml
           generateSarif: "1"
       - name: Upload SARIF
         if: always()
