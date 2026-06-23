@@ -137,9 +137,9 @@
 ---
 
 ## Open questions for application-development-squad
-1. Confirm `POST /api/auth/register` returns `{ token, user }` on 201 (same shape as login)?
-2. Minimum password policy enforced server-side? (We assume length ≥ 12, but API is source of truth — please document in OpenAPI.)
-3. Email verification flow — is `/welcome` post-register, or do we route to a "check your email" screen? Need a separate wireframe if so.
+1. ~~Confirm `POST /api/auth/register` returns `{ token, user }` on 201 (same shape as login)?~~ **Resolved in `verify-email.md`:** API returns `{ token?, user, requiresVerification }`. Token issued iff `requiresVerification: false`.
+2. ~~Minimum password policy enforced server-side?~~ **Resolved:** API is source of truth via `400 { code: "WEAK_PASSWORD" }`. Client meter is hint-only. App-dev to document in OpenAPI.
+3. ~~Email verification flow~~ **Resolved:** see `verify-email.md`. API `requiresVerification` flag drives redirect to `/verify-email` vs `/welcome`.
 
 ## Open question for security-hardening-squad
-- Rate-limit response shape for 429 (Retry-After header? body field?). Drives the countdown UI.
+- ~~Rate-limit response shape for 429~~ **Resolved in `rate-limit-contract.md`:** `{ code: "RATE_LIMITED", message, retryAfterSeconds, scope }` + `Retry-After` header. Both files locked, no further design input required.

@@ -2,10 +2,14 @@
 
 Lo-fi wireframes for the authentication flow. Owner: **experience-design-squad**.
 
-| Screen   | File                 | Route       | API endpoint              |
-|----------|----------------------|-------------|---------------------------|
-| Login    | [login.md](./login.md)       | `/login`    | `POST /api/auth/login`    |
-| Register | [register.md](./register.md) | `/register` | `POST /api/auth/register` |
+| Screen        | File                                 | Route            | API endpoint                       |
+|---------------|--------------------------------------|------------------|------------------------------------|
+| Login         | [login.md](./login.md)               | `/login`         | `POST /api/auth/login`             |
+| Register      | [register.md](./register.md)         | `/register`      | `POST /api/auth/register`          |
+| Verify email  | [verify-email.md](./verify-email.md) | `/verify-email`  | `GET /api/auth/verify`, `POST /api/auth/verify/resend` |
+
+Cross-cutting specs:
+- [rate-limit-contract.md](./rate-limit-contract.md) — 429 response shape + UI countdown contract (binds all auth endpoints).
 
 ## Shared design tokens (lo-fi)
 - Card: max-width 420px on desktop, full-bleed with 16px gutter on mobile.
