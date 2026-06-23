@@ -1,0 +1,165 @@
+---
+# Auth UI token-hygiene rules
+#
+# Locks the security-hardening-squad sign-off line in
+# `analysis/auth-verify-email-merge-gate.md` §4:
+#   "no new spawn/exec surface; token not logged".
+#
+# These rules apply to the verify-email wiring layer (and any future
+# auth-ui wiring) that handles the email-confirmation token from the URL.
+# The reducer is already pure (enforced by purity tests + invariant-grep
+# in `auth-ui-contracts-gate.yml`); these rules close the wiring-layer
+# side of the contract.
+#
+# Severity ERROR rules fail the `security-static` job. WARN rules
+# annotate the PR.
+#
+# Scope is path-restricted via `paths:` per rule so we don't fight the
+# rest of the repo.
+
+rules:
+  - id: no-token-in-console
+    message: >-
+      Auth verify-email token must never be passed to console.* —
+      browser devtools history persists across sessions and screen-shares
+      leak it. Use a redacted telemetry event instead
+      (`auth.verify.auto_resend_fired` with no token payload).
+    severity: ERROR
+    languages: [typescript, javascript]
+    paths:
+      include:
+        - "packages/**/auth/**"
+        - "src/**/auth/**"
+        - "apps/**/auth/**"
+        - "**/verify-email*"
+        - "**/VerifyEmail*"
+    pattern-either:
+      - pattern: console.$METHOD(..., $TOKEN, ...)
+      - pattern: console.$METHOD(`...${$TOKEN}...`)
+      - pattern: console.$METHOD("..." + $TOKEN + "...")
+    pattern-where:
+      - metavariable-regex:
+          metavariable: $TOKEN
+          regex: '(?i).*(token|otp|code|magic).*'
+
+  - id: no-token-in-storage
+    message: >-
+      Auth verify-email token must not be persisted to
+      localStorage/sessionStorage/IndexedDB/document.cookie. The token
+      is single-use and short-lived — persistence widens the
+      exfiltration window. Hold it in component state for the duration
+      of the verify flow only.
+    severity: ERROR
+    languages: [typescript, javascript]
+    paths:
+      include:
+        - "packages/**/auth/**"
+        - "src/**/auth/**"
+        - "apps/**/auth/**"
+        - "**/verify-email*"
+        - "**/VerifyEmail*"
+    pattern-either:
+      - pattern: localStorage.setItem($KEY, $TOKEN)
+      - pattern: sessionStorage.setItem($KEY, $TOKEN)
+      - pattern: window.localStorage.setItem($KEY, $TOKEN)
+      - pattern: window.sessionStorage.setItem($KEY, $TOKEN)
+      - pattern: document.cookie = $TOKEN
+    pattern-where:
+      - metavariable-regex:
+          metavariable: $TOKEN
+          regex: '(?i).*(token|otp|code|magic).*'
+
+  - id: no-token-in-url-fragment-navigation
+    message: >-
+      Do not propagate the email-verify token into a new URL via
+      window.location, history.pushState, or router navigation calls.
+      The token belongs only on the inbound verify URL and the outbound
+      POST body — anywhere else and it ends up in referrer headers,
+      analytics, or browser history.
+    severity: ERROR
+    languages: [typescript, javascript]
+    paths:
+      include:
+        - "packages/**/auth/**"
+        - "src/**/auth/**"
+        - "apps/**/auth/**"
+        - "**/verify-email*"
+        - "**/VerifyEmail*"
+    pattern-either:
+      - pattern: window.location.href = `${$URL}${$TOKEN}${...}`
+      - pattern: window.location.assign(`${$URL}${$TOKEN}${...}`)
+      - pattern: history.pushState($STATE, $TITLE, `${$URL}${$TOKEN}${...}`)
+      - pattern: history.replaceState($STATE, $TITLE, `${$URL}${$TOKEN}${...}`)
+      - pattern: $ROUTER.push(`${$URL}${$TOKEN}${...}`)
+      - pattern: $ROUTER.replace(`${$URL}${$TOKEN}${...}`)
+    pattern-where:
+      - metavariable-regex:
+          metavariable: $TOKEN
+          regex: '(?i).*(token|otp|code|magic).*'
+
+  - id: no-spawn-in-auth-ui
+    message: >-
+      Auth UI wiring layer must not call execFile/spawn/exec — that
+      surface belongs to `packages/squad-cli/src/cli/util/copilot-cli.ts`
+      only (see `.semgrep/squad-spawn-rules.yml`). Triggers
+      security-hardening sign-off block in
+      `analysis/auth-verify-email-merge-gate.md` §4.
+    severity: ERROR
+    languages: [typescript, javascript]
+    paths:
+      include:
+        - "packages/**/auth/**"
+        - "src/**/auth/**"
+        - "apps/**/auth/**"
+        - "**/verify-email*"
+        - "**/VerifyEmail*"
+    pattern-either:
+      - pattern: execFile(...)
+      - pattern: execFileSync(...)
+      - pattern: spawn(...)
+      - pattern: spawnSync(...)
+      - pattern: exec(...)
+      - pattern: execSync(...)
+
+  - id: reducer-must-be-pure-no-fetch
+    message: >-
+      Reducer must not call fetch/XMLHttpRequest/navigator.sendBeacon.
+      The reducer is the idempotency lock (`resendAttempted`); side
+      effects belong in the wiring effect, not the reducer. This rule
+      backstops the purity tests in `auth-ui-contracts-gate.yml` against
+      a future refactor that smuggles side effects past the
+      same-reference invariant.
+    severity: ERROR
+    languages: [typescript, javascript]
+    paths:
+      include:
+        - "**/verifyEmailReducer*"
+        - "**/VerifyEmailReducer*"
+        - "**/verify-email-reducer*"
+    pattern-either:
+      - pattern: fetch(...)
+      - pattern: $X.fetch(...)
+      - pattern: new XMLHttpRequest()
+      - pattern: navigator.sendBeacon(...)
+      - pattern: $X.postMessage(...)
+
+  - id: warn-token-in-telemetry-payload
+    message: >-
+      Telemetry events on the verify flow (auth.verify.*) must not
+      include the raw token in their payload. Use a deterministic hash
+      prefix (first 8 chars of SHA-256) if you need correlation across
+      events. Review telemetry helpers before merging.
+    severity: WARNING
+    languages: [typescript, javascript]
+    paths:
+      include:
+        - "packages/**/auth/**"
+        - "src/**/auth/**"
+        - "apps/**/auth/**"
+        - "**/verify-email*"
+        - "**/VerifyEmail*"
+    pattern-either:
+      - pattern: |
+          $TELEMETRY("auth.verify." + ..., { ..., token: $TOKEN, ... })
+      - pattern: |
+          $TELEMETRY(`auth.verify.${...}`, { ..., token: $TOKEN, ... })
