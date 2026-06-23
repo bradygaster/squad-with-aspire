@@ -210,7 +210,17 @@ gh release create v0.5.0 \
 
 ---
 
-## 5. Smoke (S1–S10 from `docs/dark-mode/RELEASE-v0.5.0.md` §5)
+## 5. Smoke (S1–S11 technical + U1–U11 perceptual)
+
+> **S1–S11 = technical (this doc); U1–U11 = perceptual (XD's
+> `upstream-transplants/dark-mode-PR28/UX-SMOKE.md` @ `613ceda`).
+> Both suites must pass before v0.5.0 tag.** S-rows assert headers,
+> hashes, storage keys, and DOM state. U-rows assert what a human
+> actually perceives (no-flash, OS-flip latency, token sweep, kbd/SR/
+> touch/reduced-motion). XD owns the U-suite sign-off; release-captain
+> blocks the tag if either suite reports a release-blocker FAIL.
+> Release-blocker U-rows: **U1, U2, U3, U4, U5, U6, U7, U9**.
+> U8 / U10 / U11 / Safari are file-as-follow-up acceptable.
 
 15 min, incognito, Chromium-latest + Firefox-latest, light + dark OS:
 
@@ -284,6 +294,17 @@ After v0.5.0 is live and smoke passes, file these (pre-approved titles):
    which is now closed by sibling PR — see §3b. Preview environment ships
    Report-Only; this issue tracks the upgrade to enforce mode once the
    CSP report endpoint shows ≥1 sprint of zero violations.)
+
+### Release gate (must all be ✅ before `git tag v0.5.0`)
+
+| Gate                                             | Owner            | Status reference            |
+| ------------------------------------------------ | ---------------- | --------------------------- |
+| PR #28 squash-merged                             | release-deploy   | §3                          |
+| Sibling PR `dm-006-csp-wiring` squash-merged     | release-deploy   | §3b                         |
+| S1–S11 technical smoke green                     | release-deploy   | §5 (this doc)               |
+| U1–U7 + U9 perceptual smoke green                | experience-design| `UX-SMOKE.md` @ `613ceda`   |
+| Required CI checks green on both PRs             | release-deploy   | §2                          |
+| Sign-off ledger §8 all ✅                         | release-deploy   | §8                          |
 
 ---
 
