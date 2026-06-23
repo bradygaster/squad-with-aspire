@@ -1,0 +1,194 @@
+# Team Retro merge gate — required check on any PR touching specs/team-retro,
+# packages/team-retro/**, .squad/retros/**, or .github/ISSUE_TEMPLATE/retro-action.yml.
+#
+# Pattern mirrors auth-ui-contracts-gate.yml and squad-ci-windows-full.yml:
+# matrix run, source-level invariant grep, aggregate "gate" job is the
+# branch-protection check.
+#
+# Owner: review-deployment-squad
+# Linked: specs/team-retro/PRD.md (TR-001..TR-010)
+
+name: team-retro-gate
+
+on:
+  pull_request:
+    paths:
+      - "specs/team-retro/**"
+      - "packages/team-retro/**"
+      - ".squad/retros/**"
+      - ".github/ISSUE_TEMPLATE/retro-action.yml"
+      - "docs/wireframes/retro/**"
+      - "docs/security/retro-privacy.md"
+      - ".github/workflows/team-retro-gate.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  prd-invariants:
+    name: PRD invariants (locked contract)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: PRD exists and is locked
+        run: |
+          test -f specs/team-retro/PRD.md
+          grep -q "Status:.*Locked for execution" specs/team-retro/PRD.md
+
+      - name: All 10 TR-xxx items present
+        run: |
+          for n in 001 002 003 004 005 006 007 008 009 010; do
+            grep -q "### TR-$n" specs/team-retro/PRD.md || { echo "::error::missing TR-$n"; exit 1; }
+          done
+
+      - name: Action-item-as-issue strategy preserved
+        # The 10x differentiator. If this string is edited away, the product loses.
+        run: |
+          grep -q "every action item is filed as a real GitHub issue" specs/team-retro/PRD.md
+
+      - name: Reducer idempotence requirement on TR-001
+        run: |
+          awk '/### TR-001/,/### TR-002/' specs/team-retro/PRD.md | grep -qi "idempoten"
+
+      - name: TR-003 retains EMU fallback contract
+        run: |
+          awk '/### TR-003/,/### TR-004/' specs/team-retro/PRD.md | grep -q "squad-message dispatch"
+
+      - name: TR-007 retains 30d retention + STRIDE
+        run: |
+          awk '/### TR-007/,/### TR-008/' specs/team-retro/PRD.md | grep -q "STRIDE"
+          awk '/### TR-007/,/### TR-008/' specs/team-retro/PRD.md | grep -q "30d"
+
+      - name: TR-008 coverage gate not lowered
+        run: |
+          awk '/### TR-008/,/### TR-009/' specs/team-retro/PRD.md | grep -qE "≥85%|>=85%|85 ?%"
+
+  issue-template-shape:
+    name: retro-action issue template shape
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Template required once TR-005 lands
+        # Soft until TR-005 ships, then becomes hard. Gate flips when the file
+        # exists by checking for the required field set.
+        run: |
+          if [ -f .github/ISSUE_TEMPLATE/retro-action.yml ]; then
+            for field in "owning squad" "due sprint" "success criteria"; do
+              grep -qi "$field" .github/ISSUE_TEMPLATE/retro-action.yml \
+                || { echo "::error::retro-action.yml missing field: $field"; exit 1; }
+            done
+            grep -q "labels:" .github/ISSUE_TEMPLATE/retro-action.yml
+            grep -q "retro-action" .github/ISSUE_TEMPLATE/retro-action.yml
+          else
+            echo "retro-action.yml not yet present — gate is soft until TR-005 ships"
+          fi
+
+  reducer-purity:
+    name: reducer purity (TR-001, TR-006)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: No timers / I-O in reducer source
+        run: |
+          if [ -d packages/team-retro/src ]; then
+            # Reducer files must not import fs, child_process, fetch, or timers.
+            # Same hygiene rule as packages/monitor-degrade-contract.
+            if grep -rnE "from ['\"](fs|node:fs|child_process|node:child_process)['\"]|setTimeout\(|setInterval\(|fetch\(" packages/team-retro/src/reducer.ts packages/team-retro/src/reducer/*.ts 2>/dev/null; then
+              echo "::error::reducer imports I-O or timers; must stay pure"
+              exit 1
+            fi
+          else
+            echo "packages/team-retro/src not yet present — soft pass"
+          fi
+
+      - name: Run reducer unit tests when present
+        run: |
+          if [ -f packages/team-retro/package.json ]; then
+            cd packages/team-retro
+            npm ci --no-audit --no-fund
+            npm test --silent
+          else
+            echo "package not yet present — soft pass"
+          fi
+
+  action-item-pipeline-contract:
+    name: TR-003 pipeline contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: action-item → gh issue helper has EMU fallback
+        run: |
+          if [ -f packages/team-retro/src/action-item-pipeline.ts ]; then
+            grep -q "squad_send_message\|squad-message" packages/team-retro/src/action-item-pipeline.ts \
+              || { echo "::error::action-item pipeline missing EMU fallback path"; exit 1; }
+            grep -q "retro-action" packages/team-retro/src/action-item-pipeline.ts \
+              || { echo "::error::action-item pipeline must apply retro-action label"; exit 1; }
+          else
+            echo "TR-003 source not yet present — soft pass"
+          fi
+
+  privacy-rails:
+    name: privacy rails (TR-007)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Raw IC posts not committed
+        # Defense-in-depth: a contributor must never accidentally check in raw
+        # sentiment posts. Only the aggregate transcript may live in git.
+        run: |
+          if find .squad/retros -type f \( -name "raw-*.json" -o -name "ic-*.md" \) 2>/dev/null | grep -q .; then
+            echo "::error::raw IC posts must not be committed; retention is 30d off-tree"
+            find .squad/retros -type f \( -name "raw-*.json" -o -name "ic-*.md" \)
+            exit 1
+          fi
+
+      - name: Threat model present once TR-007 ships
+        run: |
+          if [ -d docs/security ] && ls docs/security/retro-privacy.md >/dev/null 2>&1; then
+            grep -qi "STRIDE" docs/security/retro-privacy.md
+            grep -qi "30 ?d\|30 day" docs/security/retro-privacy.md
+          else
+            echo "docs/security/retro-privacy.md not yet present — soft pass until TR-007 lands"
+          fi
+
+  cross-squad-sign-off:
+    name: cross-squad sign-off ledger
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Merge gate doc present
+        run: |
+          test -f analysis/team-retro/merge-gate.md
+          # Every squad named in PRD ownership table must appear in the gate doc.
+          for squad in application-development experience-design quality-testing security-hardening azure-infrastructure review-deployment ideation-research-planning; do
+            grep -q "$squad" analysis/team-retro/merge-gate.md \
+              || { echo "::error::merge-gate.md missing $squad sign-off row"; exit 1; }
+          done
+
+  gate:
+    name: gate
+    needs:
+      - prd-invariants
+      - issue-template-shape
+      - reducer-purity
+      - action-item-pipeline-contract
+      - privacy-rails
+      - cross-squad-sign-off
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "team-retro gate green"
