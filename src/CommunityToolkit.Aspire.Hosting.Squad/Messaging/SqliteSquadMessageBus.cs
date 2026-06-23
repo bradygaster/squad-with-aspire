@@ -262,22 +262,26 @@ public sealed class SqliteSquadMessageBus : ISquadMessageBus, IDisposable
 
         await foreach (var message in channel.Reader.ReadAllAsync(ct).ConfigureAwait(false))
         {
-            // Create a consumer span linked to the producer's trace
+            // Reconstruct the producer's trace context from the stamped message so the
+            // consumer span nests inside the sender's trace tree (one continuous waterfall
+            // from the originating producer through every downstream consumer).
+            ActivityContext parentContext = default;
+            if (message.TraceId is not null && message.SpanId is not null)
+            {
+                parentContext = new ActivityContext(
+                    ActivityTraceId.CreateFromString(message.TraceId),
+                    ActivitySpanId.CreateFromString(message.SpanId),
+                    ActivityTraceFlags.Recorded);
+            }
+
             using var activity = ActivitySource.StartActivity(
                 $"squad.message.receive {message.From} → {squadName}",
-                ActivityKind.Consumer);
+                ActivityKind.Consumer,
+                parentContext);
             activity?.SetTag("messaging.system", "squad-bus");
             activity?.SetTag("messaging.source.name", message.From);
             activity?.SetTag("messaging.destination.name", squadName);
             activity?.SetTag("messaging.message.id", message.Id);
-
-            if (message.TraceId is not null && message.SpanId is not null)
-            {
-                activity?.AddLink(new ActivityLink(new ActivityContext(
-                    ActivityTraceId.CreateFromString(message.TraceId),
-                    ActivitySpanId.CreateFromString(message.SpanId),
-                    ActivityTraceFlags.Recorded)));
-            }
 
             yield return message;
         }

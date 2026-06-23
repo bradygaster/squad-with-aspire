@@ -90,9 +90,14 @@ public sealed class CoordinatorService : BackgroundService
             {
                 SquadTelemetry.MessagesReceived.Add(1, new TagList { { "source", "user" } });
 
+                // Reconstruct the producer's trace context so this consumer span nests
+                // inside the originating user message's trace tree (single waterfall view).
+                var userParentCtx = TryParseTraceContext(message.TraceId, message.SpanId);
+
                 using var activity = ActivitySource.StartActivity(
                     $"user → coordinator",
-                    ActivityKind.Server);
+                    ActivityKind.Server,
+                    userParentCtx);
                 activity?.SetTag("messaging.from", message.From);
                 activity?.SetTag("messaging.to", "coordinator");
                 activity?.SetTag("messaging.message.id", message.Id);
@@ -185,7 +190,8 @@ public sealed class CoordinatorService : BackgroundService
 
                 using var activity = ActivitySource.StartActivity(
                     $"{message.From} → {squadName}",
-                    ActivityKind.Consumer);
+                    ActivityKind.Consumer,
+                    TryParseTraceContext(message.TraceId, message.SpanId));
                 activity?.SetTag("messaging.from", message.From);
                 activity?.SetTag("messaging.to", squadName);
                 activity?.SetTag("messaging.type", message.From == "user" ? "dm" : "inter-squad");
@@ -642,4 +648,28 @@ public sealed class CoordinatorService : BackgroundService
     /// <summary>Null-safe string truncation to avoid NRE on message bodies.</summary>
     private static string Truncate(string? text, int maxLength) =>
         string.IsNullOrEmpty(text) ? "" : text[..Math.Min(maxLength, text.Length)];
+
+    /// <summary>
+    /// Reconstructs a W3C ActivityContext from the trace/span IDs stamped on a message
+    /// by SqliteSquadMessageBus.SendAsync. Returns default if the message wasn't traced
+    /// (e.g. test fixtures). Used to chain consumer spans under the producer span so the
+    /// entire conversation cascade appears as a single waterfall in the dashboard.
+    /// </summary>
+    private static ActivityContext TryParseTraceContext(string? traceId, string? spanId)
+    {
+        if (string.IsNullOrEmpty(traceId) || string.IsNullOrEmpty(spanId))
+            return default;
+
+        try
+        {
+            return new ActivityContext(
+                ActivityTraceId.CreateFromString(traceId),
+                ActivitySpanId.CreateFromString(spanId),
+                ActivityTraceFlags.Recorded);
+        }
+        catch (FormatException)
+        {
+            return default;
+        }
+    }
 }
