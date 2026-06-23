@@ -1,0 +1,141 @@
+name: order-history-deploy
+
+# Order History vertical (WI-HIST-1..7) — read-only behind existing feature.checkout flag.
+# No canary required. Standard rolling deploy + post-deploy smoke gate.
+# Triggers: PR merge to main touching /api/orders, OrderHistory components, or Cosmos index bicep.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/TravelAssistant.Api/Endpoints/OrderHistory*'
+      - 'src/TravelAssistant.Web/Components/OrderHistory/**'
+      - 'infra/cosmos/order-history-index.bicep'
+      - 'tests/TravelAssistant.Api.Tests/OrderHistory/**'
+      - 'tests/e2e/order-history/**'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  checks: read
+  issues: write
+
+concurrency:
+  group: order-history-deploy
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      image_sha: ${{ steps.sha.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: sha
+        run: echo "sha=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+  # Gate 1: contract tests for WI-HIST-1 must be green on this SHA
+  contract-gate:
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify WI-HIST-1 contract tests passed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ needs.preflight.outputs.image_sha }}
+        run: |
+          set -euo pipefail
+          required=("OrderHistoryEndpointTests" "OrderHistoryCursorPaginationTests" "OrderHistoryIdorTests")
+          for t in "${required[@]}"; do
+            status=$(gh api "repos/${{ github.repository }}/commits/$SHA/check-runs" \
+              --jq ".check_runs[] | select(.name==\"$t\") | .conclusion" | head -1)
+            if [ "$status" != "success" ]; then
+              echo "::error::Contract test $t not green on $SHA (got: ${status:-missing})"
+              exit 1
+            fi
+            echo "✓ $t passed"
+          done
+
+  # Gate 2: Cosmos composite index (WI-HIST-6) must exist before endpoint deploys
+  index-precheck:
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Verify composite index (sub ASC, createdAt DESC) on orders container
+        run: |
+          set -euo pipefail
+          policy=$(az cosmosdb sql container show \
+            --account-name "${{ secrets.COSMOS_ACCOUNT }}" \
+            --database-name travel \
+            --name orders \
+            --resource-group "${{ secrets.RG_NAME }}" \
+            --query 'resource.indexingPolicy.compositeIndexes' -o json)
+          echo "$policy" | jq -e '.[] | select(.[0].path=="/sub" and .[1].path=="/createdAt" and .[1].order=="descending")' \
+            || { echo "::error::WI-HIST-6 composite index missing — block deploy"; exit 1; }
+          echo "✓ Composite index present"
+
+  deploy:
+    needs: [contract-gate, index-precheck]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Rolling deploy to ACA (single revision, flag-gated feature)
+        run: |
+          az containerapp update \
+            --name checkout-api \
+            --resource-group "${{ secrets.RG_NAME }}" \
+            --image "${{ secrets.ACR_NAME }}.azurecr.io/checkout-api:${{ needs.preflight.outputs.image_sha }}" \
+            --revision-suffix "hist-${{ needs.preflight.outputs.image_sha }}"
+
+  # Gate 3: post-deploy smoke — WI-HIST-1 endpoint contract live
+  smoke-gate:
+    needs: [preflight, deploy]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run order-history smoke probe
+        env:
+          API_BASE: ${{ secrets.PROD_API_BASE }}
+          SYNTHETIC_SUB_TOKEN: ${{ secrets.SYNTHETIC_SUB_TOKEN }}
+          OTHER_SUB_TOKEN: ${{ secrets.OTHER_SUB_TOKEN }}
+        run: bash ./scripts/synthetic-order-history.sh
+
+  # Gate 4: rollback on smoke failure — single-revision rollback to previous image
+  rollback:
+    needs: [preflight, smoke-gate]
+    if: failure()
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Revert to previous revision
+        run: |
+          prev=$(az containerapp revision list \
+            --name checkout-api \
+            --resource-group "${{ secrets.RG_NAME }}" \
+            --query "[?properties.active && name!='hist-${{ needs.preflight.outputs.image_sha }}'] | sort_by(@, &properties.createdTime) | [-1].name" -o tsv)
+          az containerapp ingress traffic set \
+            --name checkout-api \
+            --resource-group "${{ secrets.RG_NAME }}" \
+            --revision-weight "$prev=100" "hist-${{ needs.preflight.outputs.image_sha }}=0"
+          gh issue create --repo ${{ github.repository }} \
+            --title "🚨 order-history rollback: smoke gate failed on ${{ needs.preflight.outputs.image_sha }}" \
+            --label "incident,sev:2,vertical:order-history" \
+            --body "Auto-rolled back to revision \`$prev\`. Investigate smoke-gate logs in run ${{ github.run_id }}."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
