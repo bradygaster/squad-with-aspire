@@ -1,0 +1,110 @@
+name: Retro action item
+description: Action item produced by a team retrospective. Filed automatically by `aspire retro` during the actioning phase, but humans MAY use this template directly.
+title: "[retro-action] <one-line outcome>"
+labels: ["retro-action"]
+projects: []
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Every field below is required. Retro action items that miss any of these end up in the action-item graveyard — that is the exact failure mode this template exists to prevent.
+
+        Linked PRD: [`specs/team-retro/PRD.md`](../../specs/team-retro/PRD.md)
+
+  - type: input
+    id: outcome
+    attributes:
+      label: Outcome (one sentence)
+      description: What is true when this is done? Write the end state, not the activity. Bad — "investigate flaky test". Good — "rate-limit middleware tests pass 100 consecutive runs in CI."
+      placeholder: "Rate-limit middleware tests pass 100 consecutive runs in CI."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: owning-squad
+    attributes:
+      label: Owning squad
+      description: Exactly one squad owns execution. Cross-cutting work must be split into per-squad issues that link to each other.
+      multiple: false
+      options:
+        - ideation-research-planning-squad
+        - experience-design-squad
+        - application-development-squad
+        - azure-infrastructure-squad
+        - quality-testing-squad
+        - security-hardening-squad
+        - review-deployment-squad
+    validations:
+      required: true
+
+  - type: input
+    id: due-sprint
+    attributes:
+      label: Due sprint
+      description: Sprint identifier in `sprint-YYYY-NN` format (NN = 1..26). Default is the sprint after the retro that produced this item.
+      placeholder: "sprint-2026-14"
+    validations:
+      required: true
+
+  - type: textarea
+    id: success-criteria
+    attributes:
+      label: Success criteria (testable, plural)
+      description: At least two bullets. Each bullet must be independently verifiable by an agent or CI — no "feel good" criteria.
+      placeholder: |
+        - `dotnet test AspireWithSquad.RateLimiting.Tests` passes 100 consecutive nightly runs.
+        - Zero `RateLimit:Flaky` warnings in CI logs across that window.
+        - Postmortem `analysis/flaky-ratelimit-2026-Q2.md` published and linked from this issue.
+      render: markdown
+    validations:
+      required: true
+
+  - type: input
+    id: source-retro
+    attributes:
+      label: Source retro session
+      description: Path to the retro session file under `.squad/retros/`. Auto-filled by `aspire retro` — humans fill manually.
+      placeholder: ".squad/retros/sprint-2026-13/session.md"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: blast-radius
+    attributes:
+      label: Blast radius if not done
+      description: Honest estimate. Drives prioritization at sprint planning.
+      options:
+        - low — quality-of-life only
+        - medium — slows one squad
+        - high — blocks a release
+        - critical — security or data-loss risk
+    validations:
+      required: true
+
+  - type: textarea
+    id: prior-attempts
+    attributes:
+      label: Prior attempts (if any)
+      description: Has this action item shown up in a previous retro? Link those issues so the next retro can see the pattern. Leave blank if first appearance.
+      placeholder: |
+        - #1289 (sprint-2026-11) — closed without merge
+        - #1342 (sprint-2026-12) — descoped
+      render: markdown
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: agent-native-checklist
+    attributes:
+      label: Agent-native checklist
+      description: These are non-negotiable. An action item that fails any of these will not be auto-injected into the next retro's prior-cycle status panel.
+      options:
+        - label: Outcome is a state, not an activity.
+          required: true
+        - label: Owning squad is exactly one squad from the dropdown.
+          required: true
+        - label: Success criteria are independently verifiable.
+          required: true
+        - label: I understand this issue will be auto-surfaced at the next retro's start until it is closed.
+          required: true
