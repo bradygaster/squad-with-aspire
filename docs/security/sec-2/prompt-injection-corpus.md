@@ -42,8 +42,21 @@ Refs:
 **CI gate (security-scan job, owned by SEC-5b):**
 - 100% block rate on `severity: critical && expected: block` → hard fail
 - ≥95% block rate on `severity: high && expected: block` → hard fail
-- 0% false-positive on benign set (`b-1`..`b-5`) → hard fail
+- 0% false-positive on benign set (identified by `category: benign` — see below) → hard fail
 - Drift gate: corpus version bump requires a security-squad review entry in `decisions.md`
+
+### Identifying benign payloads (canonical contract)
+
+**Use `category: benign`.** Do NOT branch on the `expected:` field or the `id` prefix to detect benigns.
+
+| Signal | Stability | Use it? |
+|---|---|---|
+| `category: benign` | **Canonical.** Will remain stable across all future corpus versions. | ✅ Yes |
+| `id` starts with `b-` | Convention today (v1.0). May not hold for regression captures added later. | ⚠️ Fallback only |
+| `expected: pass` | **Not used in v1.0.** Benigns use `expected: sanitize` because the guard's sanitize-pass is a no-op for them. | ❌ No |
+| `expected: sanitize` | Used by BOTH benign payloads (pass-through) AND some adversarial unicode/encoded payloads (hostile-span neutralization). NOT a benign signal. | ❌ No |
+
+Consumers should call `CorpusLoader.IsBenign(entry)` (in `tests/TravelAssistant.Security.Tests/PromptInjection/CorpusLoader.cs`) instead of rolling their own check. The loader is the single source of truth for this contract.
 
 ## Wiring (to be implemented by SEC-2 guard owner)
 
@@ -103,3 +116,40 @@ Before classification, the guard MUST:
 - Audit-trail schema (SEC-1b PII redactor PR will land first; guard reuses)
 - Red-team eval against live AOAI (SEC-2c, post-implementation)
 - Adversarial image input (`m-1` is a stub for the future multimodal wave)
+
+
+## Shared CorpusLoader (consumers: SEC-2 guard + QA llm-eval)
+
+To prevent contract drift between the input-layer guard tests (SEC-2) and the output-layer LLM eval (QA's `tests/llm-eval/CorpusEchoTests.cs`), the canonical YAML loader + DTOs live at:
+
+- `tests/TravelAssistant.Security.Tests/PromptInjection/CorpusLoader.cs`
+
+**API surface (stable):**
+
+```csharp
+var doc = CorpusLoader.LoadFromFile(yamlPath);
+foreach (var entry in doc.Adversarial())   { /* ... */ }
+foreach (var entry in doc.Benign())        { /* ... */ }
+foreach (var entry in doc.AdversarialBySeverity("critical")) { /* ... */ }
+bool isBenign = CorpusLoader.IsBenign(entry);  // category-based, NOT id-prefix-based
+```
+
+**DTOs (`CorpusEntry`):** `Id`, `Category`, `Severity`, `Vector`, `Payload`, `Expected`, `Notes`.
+
+**Additive YAML changes are safe** — the deserializer uses `IgnoreUnmatchedProperties`. New fields appear in the YAML but downstream consumers continue to compile and run unchanged. To consume a new field, add a property to `CorpusEntry` and ping consumers.
+
+**Linking from the QA llm-eval project** (csproj snippet):
+
+```xml
+<ItemGroup Condition="Exists('..\TravelAssistant.Security.Tests\PromptInjection\CorpusLoader.cs')">
+  <Compile Include="..\TravelAssistant.Security.Tests\PromptInjection\CorpusLoader.cs"
+           Link="Shared\CorpusLoader.cs" />
+  <None Include="..\TravelAssistant.Security.Tests\PromptInjection\Corpus\injection-corpus.yaml"
+        Link="corpus\injection-corpus.yaml"
+        CopyToOutputDirectory="PreserveNewest" />
+</ItemGroup>
+```
+
+Self-skipping behavior is preserved: if the corpus file is absent at runtime, consumers should `Skip.If` rather than fail. Loader throws `FileNotFoundException` with a clear remediation message if called with a missing path.
+
+**Do not duplicate the DTOs.** If you find yourself writing a local `CorpusEntry` class, link the shared file instead — duplicate DTOs are a contract-drift risk.
