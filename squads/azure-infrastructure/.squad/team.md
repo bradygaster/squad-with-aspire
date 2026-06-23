@@ -13,14 +13,17 @@
 | Name | Role | Charter | Status |
 |------|------|---------|--------|
 | InfrastructureArchitectAgent | Lead / Infrastructure Architect | .squad/agents/InfrastructureArchitectAgent/charter.md | 🏗️ Active |
+| AzurePlatformAgent | Azure Platform Engineer | .squad/agents/AzurePlatformAgent/charter.md | ☁️ Active |
+| NetworkAgent | Azure Network Engineer | .squad/agents/NetworkAgent/charter.md | 🌐 Active |
+| CostGovernanceAgent | FinOps & Cost Governance Engineer | .squad/agents/CostGovernanceAgent/charter.md | 💰 Active |
 | DeploymentAgent | Deployment Engineer | .squad/agents/DeploymentAgent/charter.md | 🔧 Active |
 | ContinuousIntegrationAgent | CI Engineer | .squad/agents/ContinuousIntegrationAgent/charter.md | ⚙️ Active |
 | ContinuousDeliveryAgent | CD Engineer | .squad/agents/ContinuousDeliveryAgent/charter.md | ⚙️ Active |
-| AzurePlatformAgent | Azure Platform Engineer | .squad/agents/AzurePlatformAgent/charter.md | ☁️ Active |
 | ObservabilityAgent | Observability Engineer | .squad/agents/ObservabilityAgent/charter.md | 📊 Active |
-| Scribe | Session Logger | .squad/agents/scribe/charter.md | 📋 Active |
-| Ralph | Work Monitor | .squad/agents/ralph/charter.md | 🔄 Active |
-| Rai | RAI Reviewer | .squad/agents/Rai/charter.md | 🛡️ Active |
+| Scribe | Session Logger & Memory Manager | .squad/agents/scribe/charter.md | 📋 Silent |
+| Ralph | Work Monitor | .squad/agents/ralph/charter.md | 🔄 Monitor |
+| Rai | RAI Reviewer | .squad/agents/Rai/charter.md | 🛡️ RAI |
+| Fact Checker | Verification & Devil's Advocate | .squad/agents/FactChecker/charter.md | 🔍 Verifier |
 
 ## Project Context
 

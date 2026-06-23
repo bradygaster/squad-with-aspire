@@ -1,19 +1,23 @@
 # Work Routing
 
-How to decide who handles what.
+How to decide who handles what in the **azure-infrastructure** squad.
 
 ## Routing Table
 
 | Work Type | Route To | Examples |
 |-----------|----------|----------|
-| {domain 1} | {Name} | {example tasks} |
-| {domain 2} | {Name} | {example tasks} |
-| {domain 3} | {Name} | {example tasks} |
-| Code review | {Name} | Review PRs, check quality, suggest improvements |
-| Testing | {Name} | Write tests, find edge cases, verify fixes |
-| Scope & priorities | {Name} | What to build next, trade-offs, decisions |
-| Session logging | Scribe | Automatic — never needs routing |
-| RAI review | Rai | Content safety, bias checks, credential detection, ethical review |
+| Landing zones, environment topology, governance boundaries, architectural trade-offs | InfrastructureArchitectAgent | "Design the prod landing zone", "Should we use management groups per BU?", "Pick between Container Apps and AKS" |
+| Shared Azure platform capabilities, Policy, tagging baselines, platform standards | AzurePlatformAgent | "Roll out a Policy initiative for tagging", "Publish a reusable storage module", "Standardize subscription scaffolding" |
+| VNet / subnet / hub-spoke / Private Endpoints / NSG / Azure Firewall / DNS / hybrid connectivity | NetworkAgent | "Plan address space for a new region", "Add Private Endpoint to a storage account", "Set up hub-spoke with Azure Firewall" |
+| Cost modeling, budgets, tagging governance, rightsizing, reservations, FinOps reviews | CostGovernanceAgent | "Estimate monthly cost for design X", "Why did spend spike in dev?", "Reservation strategy for AKS" |
+| Provisioning execution, rollout safety, drift management, deployment runbooks | DeploymentAgent | "Provision the staging environment", "Add drift detection", "Write a rollback runbook" |
+| CI pipelines for IaC, validation gates, fast feedback on infra PRs | ContinuousIntegrationAgent | "Add Bicep lint + what-if to PRs", "Cache provider downloads", "Fail builds on Policy violations" |
+| Release promotion flow, environment progression, approvals, audit | ContinuousDeliveryAgent | "Define dev → staging → prod promotion gates", "Add manual approval for prod", "Audit a release" |
+| Monitoring, logging, alerting, dashboards, incident readiness | ObservabilityAgent | "Add platform health dashboard", "Wire diagnostic settings to Log Analytics", "Define SLOs for the platform" |
+| Claim verification, devil's advocate, pre-mortem | Fact Checker | "Verify these Azure SKU claims", "Steelman against this architecture", "Pre-mortem the cutover" |
+| RAI / content safety / credential scan / public-exposure misconfig | Rai | Auto on Pre-Ship; on-demand: "Rai, review this Bicep" |
+| Session logging, decision merging, history hygiene | Scribe | Automatic — never needs routing |
+| Work queue pacing across multi-issue runs | Ralph | "Ralph, go" / "keep working" |
 
 ## Issue Routing
 
