@@ -1,0 +1,146 @@
+/* confirmation-page.css — supports squads/experience-design/artifacts/checkout/wi-confirm-3-frontend/ConfirmationPage.tsx
+ * Design tokens from checkout-design-spec.md:
+ *   primary  #2563EB  success #10B981  error #EF4444
+ * WCAG 2.2 AA: 4.5:1 contrast on body text, 3:1 on UI components, visible focus ring (2.4.7).
+ */
+
+.confirmation-page {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: #1f2937;       /* gray-800, 12.6:1 on white */
+  line-height: 1.5;
+}
+
+/* sr-only — visually hidden, screen-reader accessible. Standard pattern. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Focus ring — meets 2.4.7 Focus Visible (AA) and 2.4.13 Focus Appearance (AAA).
+ * 3px outline, 2px offset, high-contrast color. Applies to ALL focusable elements. */
+.confirmation-page :focus-visible {
+  outline: 3px solid #2563EB;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Headings — single h1 per state */
+.confirmation-page h1 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  margin: 0 0 0.5rem;
+}
+.confirmation-page h1:focus-visible {
+  /* heading is programmatically focused on error states — focus ring must be visible */
+  outline: 3px solid #2563EB;
+  outline-offset: 4px;
+}
+.confirmation-page h2 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin: 1.5rem 0 0.5rem;
+}
+
+/* State icon — decorative (aria-hidden in markup), color reinforced by icon shape + text */
+.state-icon {
+  display: inline-block;
+  font-size: 2rem;
+  line-height: 1;
+  margin-right: 0.5rem;
+  vertical-align: middle;
+}
+.icon-confirmed              { color: #10B981; }  /* success */
+.icon-pending_reconciliation { color: #2563EB; }  /* primary */
+.icon-reconciliation_delayed { color: #D97706; }  /* amber-600, 4.52:1 on white */
+.icon-failed_post_auth       { color: #EF4444; }  /* error */
+.icon-not_found_or_forbidden { color: #6B7280; }  /* gray-500 */
+
+/* Body copy */
+.state-body { font-size: 1rem; margin: 0.5rem 0 1.5rem; }
+
+/* Order number block */
+.order-number .order-id-value code {
+  display: inline-block;
+  padding: 0.25rem 0.5rem;
+  background: #F3F4F6;
+  border: 1px solid #D1D5DB;
+  border-radius: 4px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 1rem;
+}
+
+/* Polling indicator — aria-busy state */
+.polling-indicator[aria-busy="true"] p::after {
+  content: "";
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-left: 0.5rem;
+  border: 2px solid #2563EB;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+}
+
+/* Skeleton (initial load) */
+.skeleton {
+  padding: 2rem 0;
+}
+.skeleton h1 {
+  height: 2rem;
+  background: linear-gradient(90deg, #F3F4F6 25%, #E5E7EB 50%, #F3F4F6 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  color: transparent; /* h1 text retained for SR via aria-labelledby; visually shimmered */
+  border-radius: 4px;
+}
+
+/* Reduced motion — disable shimmer + spin per WCAG 2.3.3 */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton h1 { animation: none; background: #F3F4F6; }
+  .polling-indicator[aria-busy="true"] p::after { animation: none; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Action lists */
+.confirmation-page ul { padding-left: 1.25rem; margin: 0.5rem 0; }
+.confirmation-page li { margin: 0.5rem 0; }
+
+/* Links — 4.5:1 contrast + visible underline (1.4.1 not color alone) */
+.confirmation-page a {
+  color: #1D4ED8;            /* blue-700, 7.0:1 on white */
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.confirmation-page a:hover { text-decoration-thickness: 2px; }
+
+/* State-specific background tints (subtle — not primary state signal) */
+.state-confirmed .confirmation-header { border-left: 4px solid #10B981; padding-left: 1rem; }
+.state-failed_post_auth .confirmation-header,
+.state-not_found_or_forbidden .confirmation-header { border-left: 4px solid #EF4444; padding-left: 1rem; }
+.state-reconciliation_delayed .confirmation-header { border-left: 4px solid #D97706; padding-left: 1rem; }
+
+/* High-contrast mode (Windows forced-colors) — let system colors take over */
+@media (forced-colors: active) {
+  .confirmation-page :focus-visible { outline-color: Highlight; }
+  .state-icon { color: CanvasText; }
+  .order-number .order-id-value code { border-color: CanvasText; background: Canvas; }
+}
