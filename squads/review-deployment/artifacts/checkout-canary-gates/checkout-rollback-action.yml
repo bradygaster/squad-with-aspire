@@ -1,0 +1,54 @@
+name: 'Checkout Rollback'
+description: 'Revert checkout-api to last stable revision and flip kill switch'
+inputs:
+  revision_to_kill:
+    description: 'ACA revision name to drop to 0% traffic'
+    required: true
+  reason:
+    description: 'Human-readable rollback reason (logged to App Insights + Slack)'
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Flip kill switch in App Configuration
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::warning::Rolling back ${{ inputs.revision_to_kill }} — reason: ${{ inputs.reason }}"
+        az appconfig kv set \
+          --name "$APP_CONFIG_STORE" \
+          --key "$KILL_SWITCH_KEY" \
+          --value "false" \
+          --label "prod" \
+          --yes
+        echo "Kill switch flipped — all checkout traffic now returns 503 with retry-after"
+
+    - name: Drop revision to 0% traffic
+      shell: bash
+      run: |
+        STABLE=$(az containerapp revision list \
+          --name "$ACA_APP_NAME" -g "$ACA_RESOURCE_GROUP" \
+          --query "[?properties.trafficWeight==\`100\` || name=='checkout-api--stable'].name | [0]" -o tsv)
+        if [ -z "$STABLE" ]; then
+          # Fall back to most recent inactive revision tagged stable
+          STABLE=$(az containerapp revision list \
+            --name "$ACA_APP_NAME" -g "$ACA_RESOURCE_GROUP" \
+            --query "[?contains(name,'stable')].name | [0]" -o tsv)
+        fi
+        echo "Routing 100% traffic to stable revision: $STABLE"
+        az containerapp ingress traffic set \
+          --name "$ACA_APP_NAME" -g "$ACA_RESOURCE_GROUP" \
+          --revision-weight "$STABLE=100" "${{ inputs.revision_to_kill }}=0"
+
+    - name: Deactivate bad revision
+      shell: bash
+      run: |
+        az containerapp revision deactivate \
+          --name "$ACA_APP_NAME" -g "$ACA_RESOURCE_GROUP" \
+          --revision "${{ inputs.revision_to_kill }}"
+
+    - name: Emit incident annotation
+      shell: bash
+      run: |
+        echo "::notice::ROLLBACK COMPLETE — kill switch ON, revision ${{ inputs.revision_to_kill }} deactivated"
+        echo "Next step: file incident in #incidents and reset kill switch manually after RCA"

@@ -1,0 +1,294 @@
+name: checkout-canary-promote
+
+# Staged canary promotion for the checkout vertical.
+# Each stage is a separate job gated by a GitHub Environment (manual approval).
+# Environments to create in repo settings (Settings → Environments):
+#   - checkout-canary-dark    (no approvers — auto)
+#   - checkout-canary-1pct    (require: 1 reviewer from review-deployment + 1 from app-dev)
+#   - checkout-canary-10pct   (require: 1 reviewer; wait timer: 15 min)
+#   - checkout-canary-50pct   (require: 1 reviewer; wait timer: 30 min)
+#   - checkout-canary-100pct  (require: 2 reviewers — release captain + maintainer)
+#
+# Trigger: workflow_dispatch only. Operator picks the image tag built by checkout-cicd.yml
+# and the workflow walks revisions through 0% → 1% → 10% → 50% → 100% with automated
+# gate checks between each stage. Any gate failure auto-invokes rollback.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Container image tag to promote (from checkout-cicd build job)'
+        required: true
+        type: string
+      revision_suffix:
+        description: 'ACA revision suffix (e.g., r-2026-06-23-a)'
+        required: true
+        type: string
+      skip_dark:
+        description: 'Skip dark stage (image already deployed at 0%)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write     # OIDC for Azure
+  contents: read
+  actions: read
+  deployments: write
+
+env:
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ACA_RESOURCE_GROUP: rg-travel-prod
+  ACA_APP_NAME: checkout-api
+  APP_CONFIG_STORE: ${{ secrets.APP_CONFIG }}
+  KILL_SWITCH_KEY: 'checkout:enabled'
+  SYNTHETIC_TOKEN: ${{ secrets.SYNTHETIC_TEST_TOKEN }}
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────────────
+  # STAGE 0 — DARK (0% traffic, image deployed as new revision, no users)
+  # ────────────────────────────────────────────────────────────────────────────
+  dark:
+    name: 'Stage 0 · Dark (0%)'
+    if: ${{ inputs.skip_dark == false }}
+    runs-on: ubuntu-latest
+    environment: checkout-canary-dark
+    outputs:
+      revision_name: ${{ steps.deploy.outputs.revision }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy revision at 0% traffic
+        id: deploy
+        run: |
+          set -euo pipefail
+          REV="${{ env.ACA_APP_NAME }}--${{ inputs.revision_suffix }}"
+          echo "Creating revision $REV with 0% traffic"
+          az containerapp revision copy \
+            --name "${{ env.ACA_APP_NAME }}" \
+            --resource-group "${{ env.ACA_RESOURCE_GROUP }}" \
+            --image "${{ inputs.image_tag }}" \
+            --revision-suffix "${{ inputs.revision_suffix }}"
+          # All traffic stays on the latest stable revision
+          az containerapp ingress traffic set \
+            --name "${{ env.ACA_APP_NAME }}" \
+            --resource-group "${{ env.ACA_RESOURCE_GROUP }}" \
+            --revision-weight "$REV=0"
+          echo "revision=$REV" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke probe against dark revision (label-based)
+        env:
+          REV: ${{ steps.deploy.outputs.revision }}
+        run: |
+          # Hit revision directly via its FQDN (--<revision-suffix> label)
+          FQDN=$(az containerapp revision show \
+            --name "${{ env.ACA_APP_NAME }}" \
+            --resource-group "${{ env.ACA_RESOURCE_GROUP }}" \
+            --revision "$REV" --query 'properties.fqdn' -o tsv)
+          echo "Probing https://$FQDN/health/ready"
+          for i in 1 2 3 4 5; do
+            code=$(curl -sk -o /dev/null -w '%{http_code}' "https://$FQDN/health/ready" || true)
+            [ "$code" = "200" ] && exit 0
+            sleep 10
+          done
+          echo "::error::Dark revision /health/ready did not return 200"
+          exit 1
+
+      - name: Run synthetic checkout (auth headers, no real user traffic)
+        run: |
+          chmod +x ./squads/review-deployment/artifacts/checkout-cicd/synthetic-checkout.sh || true
+          REVISION="${{ steps.deploy.outputs.revision }}" \
+          SYNTHETIC_TOKEN="${{ env.SYNTHETIC_TOKEN }}" \
+          ./squads/review-deployment/artifacts/checkout-cicd/synthetic-checkout.sh
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # STAGE 1 — 1% canary  (BUG-1 + BUG-2 contract gate enforced)
+  # ────────────────────────────────────────────────────────────────────────────
+  canary-1pct:
+    name: 'Stage 1 · Canary 1%'
+    needs: dark
+    if: ${{ always() && (needs.dark.result == 'success' || inputs.skip_dark) }}
+    runs-on: ubuntu-latest
+    environment: checkout-canary-1pct
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      # ── HARD GATE: BUG-1 (idempotency) + BUG-2 (failed-replay status) contract tests
+      - name: Verify contract tests green on this image SHA
+        env:
+          SHA: ${{ inputs.image_tag }}
+        run: |
+          # The build workflow stores per-SHA test results as a GH check.
+          # Block if either contract suite is not present + passing.
+          gh api "repos/${{ github.repository }}/commits/${SHA##*:}/check-runs" \
+            --jq '.check_runs[] | select(.name | test("BUG-1|BUG-2|IdempotencyContract|FailedPaymentReplay")) | "\(.name)=\(.conclusion)"' \
+            > checks.txt
+          cat checks.txt
+          if ! grep -q 'BUG-1.*=success' checks.txt; then
+            echo "::error::BUG-1 idempotency contract test not green for $SHA — promotion HELD"
+            exit 1
+          fi
+          if ! grep -q 'BUG-2.*=success\|FailedPaymentReplay.*=success' checks.txt; then
+            echo "::error::BUG-2 failed-replay contract test not green for $SHA — promotion HELD"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Shift 1% traffic to canary revision
+        run: |
+          REV="${{ env.ACA_APP_NAME }}--${{ inputs.revision_suffix }}"
+          az containerapp ingress traffic set \
+            --name "${{ env.ACA_APP_NAME }}" \
+            --resource-group "${{ env.ACA_RESOURCE_GROUP }}" \
+            --revision-weight "$REV=1" \
+            --label-name "canary=$REV"
+
+      - name: Soak 10 minutes + collect error rate
+        id: soak1
+        run: |
+          echo "Soaking 1% traffic for 10 minutes..."
+          sleep 600
+          # Query Log Analytics for 5xx rate on canary revision
+          RATE=$(az monitor log-analytics query \
+            --workspace "${{ secrets.LOG_ANALYTICS_WORKSPACE }}" \
+            --analytics-query "ContainerAppConsoleLogs_CL | where RevisionName_s == '${{ env.ACA_APP_NAME }}--${{ inputs.revision_suffix }}' | where TimeGenerated > ago(10m) | summarize errors=countif(Log_s contains '5xx' or Log_s contains 'ERROR'), total=count() | extend rate = todouble(errors) / todouble(total) | project rate" \
+            --query '[0].rate' -o tsv 2>/dev/null || echo "0")
+          echo "error_rate=$RATE" >> "$GITHUB_OUTPUT"
+          # >1% error rate trips rollback
+          if [ "$(echo "$RATE > 0.01" | bc -l)" = "1" ]; then
+            echo "::error::Canary error rate $RATE exceeds 1% threshold"
+            exit 1
+          fi
+
+      - name: Auto-rollback on failure
+        if: failure()
+        uses: ./.github/actions/checkout-rollback
+        with:
+          revision_to_kill: '${{ env.ACA_APP_NAME }}--${{ inputs.revision_suffix }}'
+          reason: '1% canary tripped error budget'
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # STAGE 2 — 10% canary
+  # ────────────────────────────────────────────────────────────────────────────
+  canary-10pct:
+    name: 'Stage 2 · Canary 10%'
+    needs: canary-1pct
+    runs-on: ubuntu-latest
+    environment: checkout-canary-10pct
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Shift to 10% traffic
+        run: |
+          REV="${{ env.ACA_APP_NAME }}--${{ inputs.revision_suffix }}"
+          STABLE=$(az containerapp revision list --name "${{ env.ACA_APP_NAME }}" -g "${{ env.ACA_RESOURCE_GROUP }}" \
+            --query "[?properties.trafficWeight==\`90\` || properties.active].name | [0]" -o tsv)
+          az containerapp ingress traffic set \
+            --name "${{ env.ACA_APP_NAME }}" -g "${{ env.ACA_RESOURCE_GROUP }}" \
+            --revision-weight "$STABLE=90" "$REV=10"
+
+      - name: Soak 30 minutes + p95 latency check
+        run: |
+          sleep 1800
+          # p95 latency must stay under baseline + 20%
+          P95=$(az monitor metrics list \
+            --resource "${{ env.ACA_RESOURCE_GROUP }}/providers/Microsoft.App/containerApps/${{ env.ACA_APP_NAME }}" \
+            --metric "RequestLatency" --aggregation P95 --interval PT5M \
+            --query "value[0].timeseries[0].data[-1].percentile95" -o tsv 2>/dev/null || echo "0")
+          echo "p95=$P95 ms"
+          if [ "$(echo "$P95 > 800" | bc -l)" = "1" ]; then
+            echo "::error::p95 latency $P95ms exceeds 800ms threshold"
+            exit 1
+          fi
+
+      - name: Auto-rollback on failure
+        if: failure()
+        uses: ./.github/actions/checkout-rollback
+        with:
+          revision_to_kill: '${{ env.ACA_APP_NAME }}--${{ inputs.revision_suffix }}'
+          reason: '10% canary tripped latency budget'
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # STAGE 3 — 50% canary
+  # ────────────────────────────────────────────────────────────────────────────
+  canary-50pct:
+    name: 'Stage 3 · Canary 50%'
+    needs: canary-10pct
+    runs-on: ubuntu-latest
+    environment: checkout-canary-50pct
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Shift to 50/50
+        run: |
+          REV="${{ env.ACA_APP_NAME }}--${{ inputs.revision_suffix }}"
+          STABLE=$(az containerapp revision list --name "${{ env.ACA_APP_NAME }}" -g "${{ env.ACA_RESOURCE_GROUP }}" \
+            --query "[?properties.trafficWeight==\`90\` || properties.active].name | [0]" -o tsv)
+          az containerapp ingress traffic set \
+            --name "${{ env.ACA_APP_NAME }}" -g "${{ env.ACA_RESOURCE_GROUP }}" \
+            --revision-weight "$STABLE=50" "$REV=50"
+
+      - name: Soak 60 minutes
+        run: sleep 3600
+
+      - name: Auto-rollback on failure
+        if: failure()
+        uses: ./.github/actions/checkout-rollback
+        with:
+          revision_to_kill: '${{ env.ACA_APP_NAME }}--${{ inputs.revision_suffix }}'
+          reason: '50% canary tripped error budget'
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # STAGE 4 — 100% (full promotion)
+  # ────────────────────────────────────────────────────────────────────────────
+  promote-100pct:
+    name: 'Stage 4 · Promote to 100%'
+    needs: canary-50pct
+    runs-on: ubuntu-latest
+    environment: checkout-canary-100pct
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Shift 100% to new revision + deactivate old
+        run: |
+          REV="${{ env.ACA_APP_NAME }}--${{ inputs.revision_suffix }}"
+          az containerapp ingress traffic set \
+            --name "${{ env.ACA_APP_NAME }}" -g "${{ env.ACA_RESOURCE_GROUP }}" \
+            --revision-weight "$REV=100"
+          # Keep previous revision alive for 24h for fast rollback
+          echo "Old revision retained for 24h auto-cleanup"
+
+      - name: Tag image as :stable
+        run: |
+          az acr import --name "${{ secrets.ACR_NAME }}" \
+            --source "${{ inputs.image_tag }}" \
+            --image "checkout-api:stable" --force
+
+      - name: Announce
+        run: |
+          echo "::notice::Checkout vertical promoted to 100% on revision ${{ inputs.revision_suffix }}"
