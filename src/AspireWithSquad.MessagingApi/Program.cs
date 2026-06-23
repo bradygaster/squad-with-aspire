@@ -67,6 +67,7 @@ foreach (var squadName in squadNames)
             Console.WriteLine($"[{capturedName}] {traceEvent.Kind}: {traceEvent.SubagentName ?? ""} {traceEvent.RawEventType}");
         };
         options.TraceEvents = true;
+        options.EmitSubagentActivities = true;
     });
 }
 
