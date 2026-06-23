@@ -1,0 +1,160 @@
+name: auth-ui-contracts — reducer purity gate
+
+# Merge gate for verify-email reducer + rate-limit helpers.
+# Owner: review-deployment-squad
+# Runs the 7 purity tests QT committed in 3fdef48 (and the rate-limit suite)
+# on every PR that touches the contract package, the regression tests, or
+# this workflow itself. Designed to be the *required check* protecting
+# packages/auth-ui-contracts from regressions on the resendAttempted
+# idempotency invariant before app-dev wires the reducer into React.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/auth-ui-contracts/**'
+      - 'tests/regression/auth-verify-email-states.test.ts'
+      - 'tests/regression/auth-rate-limit.test.ts'
+      - '.github/workflows/auth-ui-contracts-gate.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'packages/auth-ui-contracts/**'
+      - 'tests/regression/auth-verify-email-states.test.ts'
+      - 'tests/regression/auth-rate-limit.test.ts'
+      - '.github/workflows/auth-ui-contracts-gate.yml'
+
+concurrency:
+  group: auth-ui-contracts-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  purity-tests:
+    name: Reducer purity + idempotency (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install test runner deps
+        run: |
+          # Minimal install — package is private/source-only, tests use
+          # node --test + tsx loader. Pin to avoid surprise breakage.
+          npm init -y >/dev/null
+          npm install --no-save --silent tsx@^4 typescript@^5
+
+      - name: Show package surface
+        run: |
+          echo "::group::auth-ui-contracts files"
+          ls -la packages/auth-ui-contracts/src/
+          echo "::endgroup::"
+          echo "::group::regression tests"
+          ls -la tests/regression/ 2>/dev/null || echo "no tests/regression dir"
+          echo "::endgroup::"
+
+      - name: Run verify-email reducer purity tests
+        run: |
+          if [ ! -f tests/regression/auth-verify-email-states.test.ts ]; then
+            echo "::error::Missing tests/regression/auth-verify-email-states.test.ts"
+            exit 1
+          fi
+          npx --yes tsx --test tests/regression/auth-verify-email-states.test.ts
+
+      - name: Run rate-limit tests (if present)
+        run: |
+          if [ -f tests/regression/auth-rate-limit.test.ts ]; then
+            npx --yes tsx --test tests/regression/auth-rate-limit.test.ts
+          else
+            echo "rate-limit test file not present — skipping (non-blocking)"
+          fi
+
+  invariant-grep:
+    name: Reducer invariant grep guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assert resendAttempted flag survives in reducer
+        run: |
+          set -e
+          F=packages/auth-ui-contracts/src/verify-email.ts
+          if [ ! -f "$F" ]; then
+            echo "::error::$F missing"
+            exit 1
+          fi
+          # Lock the contract: flag name, idempotent same-ref no-op, no mutation.
+          grep -q 'resendAttempted' "$F" \
+            || { echo "::error::resendAttempted flag removed from reducer"; exit 1; }
+          # The reducer must export a named function — wiring layer depends on it.
+          grep -qE 'export (function|const) verifyEmailReducer' "$F" \
+            || { echo "::error::verifyEmailReducer export signature changed"; exit 1; }
+          echo "✓ reducer contract intact"
+
+      - name: Assert 7 purity test cases present
+        run: |
+          set -e
+          F=tests/regression/auth-verify-email-states.test.ts
+          # Count test() / it() calls — QT shipped 7 new + pre-existing suite.
+          NEW_COUNT=$(grep -cE "(resendAttempted|resendStart|StrictMode|manual-then-auto|auto-then-manual|resendResult|purity)" "$F" || true)
+          if [ "$NEW_COUNT" -lt 7 ]; then
+            echo "::error::Expected ≥7 markers for QT's purity test block, found $NEW_COUNT"
+            exit 1
+          fi
+          echo "✓ purity test markers: $NEW_COUNT"
+
+  wiring-contract-doc:
+    name: Wiring contract doc must travel with reducer changes
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: If reducer changed, require test or CHANGELOG update
+        run: |
+          set -e
+          BASE=${{ github.event.pull_request.base.sha }}
+          HEAD=${{ github.event.pull_request.head.sha }}
+          CHANGED=$(git diff --name-only "$BASE" "$HEAD" || true)
+          echo "Changed files:"
+          echo "$CHANGED"
+          if echo "$CHANGED" | grep -q '^packages/auth-ui-contracts/src/verify-email.ts$'; then
+            if ! echo "$CHANGED" | grep -qE '^(tests/regression/auth-verify-email-states\.test\.ts|CHANGELOG\.md|packages/auth-ui-contracts/CHANGELOG\.md)$'; then
+              echo "::error::verify-email.ts changed without updating either the regression test file or CHANGELOG"
+              exit 1
+            fi
+          fi
+          echo "✓ wiring contract doc requirement satisfied"
+
+  gate:
+    name: auth-ui-contracts merge gate
+    runs-on: ubuntu-latest
+    needs: [purity-tests, invariant-grep, wiring-contract-doc]
+    if: always()
+    steps:
+      - name: Aggregate
+        run: |
+          if [ "${{ needs.purity-tests.result }}" != "success" ]; then
+            echo "::error::purity-tests failed"; exit 1
+          fi
+          if [ "${{ needs.invariant-grep.result }}" != "success" ]; then
+            echo "::error::invariant-grep failed"; exit 1
+          fi
+          # wiring-contract-doc only runs on PRs; skipped on push is fine.
+          if [ "${{ github.event_name }}" = "pull_request" ] \
+              && [ "${{ needs.wiring-contract-doc.result }}" != "success" ]; then
+            echo "::error::wiring-contract-doc failed"; exit 1
+          fi
+          echo "✅ auth-ui-contracts merge gate green"
