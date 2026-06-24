@@ -1,0 +1,64 @@
+# Append to .github/workflows/checkout-canary-promote.yml as a new job.
+# Wires as: needs: [security-gate, refunds-frontend-gate, runtime-gate-p0, checkout-debug-env-scan]
+# on every promote-* stage (dark / canary-1 / canary-10 / canary-50 / prod-100).
+#
+# Enforces GATE-CO-06e (security-hardening): CHECKOUT_DEBUG env var must NEVER be set
+# on any deployment env past `dev`. Covers app bicep + canary monitor bicep + workflow envs.
+# Sister scan to security-gate-job-v2's anti-delete-row floor.
+
+  checkout-debug-env-scan:
+    name: GATE-CO-06e · CHECKOUT_DEBUG env scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan infra/bicep for CHECKOUT_DEBUG outside dev
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "::group::Bicep scan"
+          # Allow CHECKOUT_DEBUG only inside dev.bicepparam (and dev.* variants).
+          hits=$(grep -rnE 'CHECKOUT_DEBUG' infra/bicep/ 2>/dev/null | grep -vE '(^|/)dev\.bicepparam|(^|/)dev\.[a-z]+\.bicepparam' || true)
+          if [[ -n "$hits" ]]; then
+            echo "::error::CHECKOUT_DEBUG referenced in bicep outside dev params:"
+            echo "$hits"
+            exit 1
+          fi
+          echo "::endgroup::"
+
+      - name: Scan canary monitor bundle (defensive — must be 0 hits)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -d infra/bicep/synthetic-monitors ]]; then
+            if grep -rnE 'CHECKOUT_DEBUG' infra/bicep/synthetic-monitors/ 2>/dev/null; then
+              echo "::error::CHECKOUT_DEBUG must NEVER appear in synthetic-monitors bicep"
+              exit 1
+            fi
+          fi
+
+      - name: Scan workflows for CHECKOUT_DEBUG on non-dev environments
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Forbid CHECKOUT_DEBUG=1 in any workflow that targets a non-dev environment.
+          hits=$(grep -rnE 'CHECKOUT_DEBUG[[:space:]]*[:=][[:space:]]*["'\''0-9]*1' .github/workflows/ 2>/dev/null | grep -vE 'dev\.yml|dev-' || true)
+          if [[ -n "$hits" ]]; then
+            echo "::error::CHECKOUT_DEBUG=1 found in non-dev workflow context:"
+            echo "$hits"
+            exit 1
+          fi
+
+      - name: Scan canary-runner container env (post-build)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # If a Dockerfile/compose surfaces CHECKOUT_DEBUG anywhere, fail.
+          if [[ -d apps/canary-runner ]]; then
+            if grep -rnE 'CHECKOUT_DEBUG' apps/canary-runner/ 2>/dev/null; then
+              echo "::error::CHECKOUT_DEBUG must NEVER appear in canary-runner source/Dockerfile"
+              exit 1
+            fi
+          fi
