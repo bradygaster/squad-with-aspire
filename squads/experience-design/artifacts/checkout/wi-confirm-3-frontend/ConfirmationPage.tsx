@@ -99,7 +99,7 @@ export const ConfirmationPage: React.FC<ConfirmationPageProps> = ({
     return (
       <main aria-labelledby="conf-loading-h1" className="confirmation-page">
         <div role="status" aria-live="polite" aria-busy="true" className="skeleton">
-          <h1 id="conf-loading-h1" tabIndex={-1}>
+          <h1 id="conf-loading-h1" data-testid="confirmation-heading" tabIndex={-1}>
             Loading your order
           </h1>
           <p>Please wait while we retrieve your booking.</p>
@@ -145,7 +145,7 @@ export const ConfirmationPage: React.FC<ConfirmationPageProps> = ({
         <span aria-hidden="true" className={`state-icon icon-${uiState}`}>
           {copy.icon}
         </span>
-        <h1 id="conf-h1" ref={headingRef} tabIndex={-1}>
+        <h1 id="conf-h1" ref={headingRef} data-testid="confirmation-heading" tabIndex={-1}>
           {copy.h1}
         </h1>
         <p className="state-body">{copy.body}</p>

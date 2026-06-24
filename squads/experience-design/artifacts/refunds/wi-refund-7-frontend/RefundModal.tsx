@@ -251,7 +251,7 @@ export const RefundModal: React.FC<RefundModalProps> = ({
         className="refund-modal"
         data-testid="refund-modal"
       >
-        <h2 id="refund-modal-title" className="refund-modal__title">
+        <h2 id="refund-modal-title" data-testid="refund-modal-heading" className="refund-modal__title">
           Refund this order?
         </h2>
         <div id="refund-modal-body" className="refund-modal__body">

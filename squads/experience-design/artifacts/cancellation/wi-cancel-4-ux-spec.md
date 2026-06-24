@@ -59,7 +59,7 @@
 ### 3.2 `CancelOrderModal`
 - Trigger: click on `CancelOrderButton`.
 - Variant: destructive-confirm dialog.
-- **Heading (h2):** "Cancel this order?"
+- **Heading (h2):** "Cancel this order?" — MUST carry `data-testid="cancel-modal-heading"` (per QA's focus-policy reconciliation patch; mirrors the `confirmation-heading` / `refund-modal-heading` testid contract for stable focus/heading selection).
 - **Body copy:**
   > "We'll request cancellation with the provider. If accepted, your booking is canceled and we'll start a refund. This can take up to 24 hours to confirm."
 - **Buttons (in DOM order — Cancel FIRST, Confirm LAST):**
@@ -148,6 +148,7 @@ Per the binding note in `qa-testhook-patches.md` and QA's `focus-live-region-enf
 |---|---|---|
 | `cancel-trigger-button` | Cancel CTA | All |
 | `cancel-modal` | Dialog root | `confirming` |
+| `cancel-modal-heading` | Modal h2 ("Cancel this order?") | `confirming` |
 | `cancel-modal-cancel-button` | Cancel button in modal | `confirming` |
 | `cancel-modal-confirm-button` | Confirm button in modal | `confirming` |
 | `cancel-status-inline` | Inline status wrapper | `pending|terminal-*|reconciliation_delayed` |
@@ -225,7 +226,7 @@ All events go through `window.telemetry.track` via the same `safeTrack` wrapper 
 
 - [ ] CTA visibility driven by `order.eligibleActions` only — zero client clock logic.
 - [ ] Modal: Cancel autofocus, focus trap, Esc + Back + overlay = Cancel, focus restored to trigger.
-- [ ] All 11 testids from §6 present.
+- [ ] All 12 testids from §6 present.
 - [ ] All 9 mapped error codes from §4 produce correct copy + retry affordance.
 - [ ] Unmapped codes fire `cancel.failure_reason_unmapped` telemetry.
 - [ ] `cancel.rejected_by_provider` terminal state shows refund CTA inline (server-driven eligibility).
