@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Aspire.Hosting;
 using AspireWithSquad.MessagingApi;
 using GitHub.Copilot;
@@ -64,7 +65,40 @@ foreach (var squadName in squadNames)
         };
         options.OnSubagentTrace = traceEvent =>
         {
-            Console.WriteLine($"[{capturedName}] {traceEvent.Kind}: {traceEvent.SubagentName ?? ""} {traceEvent.RawEventType}");
+            // The wrapper's `SubagentName` is whatever the coordinator passed as the `name`
+            // parameter to the `task` tool — often "general-purpose" because the Squad
+            // framework persona (squad.agent.md line 814) literally instructs
+            // `agent_type: "general-purpose"`. The actual persona identity (e.g.
+            // "🏗️ TestArchitectAgent: Build the test plan") is carried by the
+            // underlying SDK event's `Data.AgentDescription` property, which the
+            // wrapper does not expose directly. We use reflection on
+            // `traceEvent.RawEvent` to recover it and surface it as both a console
+            // log and an OpenTelemetry tag so the dashboard shows who actually ran.
+            string? agentDescription = null;
+            try
+            {
+                var rawData = traceEvent.RawEvent?.GetType()
+                    .GetProperty("Data")?.GetValue(traceEvent.RawEvent);
+                agentDescription = rawData?.GetType()
+                    .GetProperty("AgentDescription")?.GetValue(rawData) as string;
+            }
+            catch
+            {
+                // Swallow reflection errors — telemetry must never break the host.
+            }
+
+            var descSuffix = string.IsNullOrEmpty(agentDescription) ? "" : $" // {agentDescription}";
+            Console.WriteLine($"[{capturedName}] {traceEvent.Kind}: {traceEvent.SubagentName ?? ""} {traceEvent.RawEventType}{descSuffix}");
+
+            // The toolkit starts a child Activity per subagent event when
+            // `EmitSubagentActivities = true`. If it is still current, enrich it
+            // with the persona description so dashboard traces show "🏗️
+            // TestArchitectAgent: ..." alongside the agent_type.
+            if (!string.IsNullOrEmpty(agentDescription) && Activity.Current is { } activity)
+            {
+                activity.SetTag("squad.subagent.description", agentDescription);
+                activity.SetTag("squad.subagent.dispatcher", capturedName);
+            }
         };
         options.TraceEvents = true;
         options.EmitSubagentActivities = true;
@@ -74,7 +108,19 @@ foreach (var squadName in squadNames)
 // Squad coordinator routes user messages to all squads and dispatches to SquadAgents
 builder.Services.AddHostedService<CoordinatorService>();
 
-// OpenTelemetry: export traces and metrics to the Aspire dashboard via OTLP
+// Configure the OpenTelemetry logging provider BEFORE wiring up the OTLP exporter
+// so that ILogger output reaches the Aspire dashboard with structured templates
+// rendered. Without IncludeFormattedMessage=true the OTLP body field carries the
+// raw message template (e.g. "CliPath={CliPath}") and the dashboard displays the
+// unrendered placeholders instead of the actual values.
+builder.Logging.AddOpenTelemetry(logging =>
+{
+    logging.IncludeFormattedMessage = true;
+    logging.IncludeScopes = true;
+    logging.ParseStateValues = true;
+});
+
+// OpenTelemetry: export traces, metrics, and logs to the Aspire dashboard via OTLP
 var otel = builder.Services.AddOpenTelemetry()
     .WithTracing(tracing => tracing
         .AddSource(SquadMessagingServiceExtensions.ActivitySourceName)
