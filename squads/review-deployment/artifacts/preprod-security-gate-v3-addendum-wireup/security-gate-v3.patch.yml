@@ -1,0 +1,116 @@
+# security-gate v3 — addendum patch over v2 (commit 6070f3f)
+#
+# Apply: replace the security-gate job body in checkout-canary-promote.yml
+# with this version. Three deltas vs v2:
+#   1. ANTI_DELETE_ROW_FLOOR: 20 → 23 (3 new P0 rows from addendum-v3)
+#   2. REQUIRED_GATE_IDS: +GATE-CO-08-extension, +GATE-CO-06c-namespace, +GATE-CO-06f
+#   3. New G7 grep gate forbidding raw provider literal escapes in apps/web/src/
+#
+# Owners: review-deployment (this job) + per-row owners flip ☐→✅ on their squad's PR.
+
+  security-gate:
+    name: security-gate (preprod gate v3)
+    runs-on: ubuntu-latest
+    env:
+      GATE_DOC: docs/security/preprod-security-gate.md
+      ANTI_DELETE_ROW_FLOOR: "23"
+      STALENESS_DAYS: "90"
+      SIGNOFF_MIN_SQUADS: "4"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: gate doc must exist
+        run: |
+          if [ ! -f "$GATE_DOC" ]; then
+            echo "::error::$GATE_DOC missing"
+            exit 1
+          fi
+
+      - name: anti-delete-file (gate doc may never be deleted)
+        run: |
+          if git log --diff-filter=D --name-only --pretty=format: | grep -Fxq "$GATE_DOC"; then
+            echo "::error::$GATE_DOC was deleted in history — restore required"
+            exit 1
+          fi
+
+      - name: anti-delete-row (floor ${{ env.ANTI_DELETE_ROW_FLOOR }})
+        run: |
+          ROW_COUNT=$(grep -cE '^\| (GATE|SEC)-' "$GATE_DOC" || echo 0)
+          if [ "$ROW_COUNT" -lt "$ANTI_DELETE_ROW_FLOOR" ]; then
+            echo "::error::row count $ROW_COUNT < floor $ANTI_DELETE_ROW_FLOOR — rows deleted without addendum"
+            exit 1
+          fi
+          echo "row count: $ROW_COUNT (floor $ANTI_DELETE_ROW_FLOOR)"
+
+      - name: required gate IDs present
+        run: |
+          REQUIRED="GATE-CO-06 GATE-CO-06a GATE-CO-06b GATE-CO-06b-canary GATE-CO-06c GATE-CO-06c-namespace GATE-CO-06d GATE-CO-06e GATE-CO-06f GATE-CO-08 GATE-CO-08-extension"
+          MISSING=""
+          for id in $REQUIRED; do
+            if ! grep -qE "^\| \*?\*?$id\*?\*? " "$GATE_DOC"; then
+              MISSING="$MISSING $id"
+            fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "::error::missing required gate IDs:$MISSING"
+            exit 1
+          fi
+
+      - name: staleness cap (${{ env.STALENESS_DAYS }} days)
+        run: |
+          LAST_TOUCH=$(git log -1 --format=%ct -- "$GATE_DOC")
+          NOW=$(date +%s)
+          AGE_DAYS=$(( (NOW - LAST_TOUCH) / 86400 ))
+          if [ "$AGE_DAYS" -gt "$STALENESS_DAYS" ]; then
+            echo "::error::$GATE_DOC stale ($AGE_DAYS days > $STALENESS_DAYS cap)"
+            exit 1
+          fi
+
+      - name: sign-off matrix (>=${{ env.SIGNOFF_MIN_SQUADS }} squads on canary-50+)
+        if: contains(fromJSON('["canary-50","prod-100"]'), inputs.stage)
+        run: |
+          SQUADS="security-hardening review-deployment application-development quality-testing azure-infrastructure"
+          SIGNED=0
+          for s in $SQUADS; do
+            if grep -qE "signed-off:.*$s" "$GATE_DOC"; then
+              SIGNED=$((SIGNED + 1))
+            fi
+          done
+          if [ "$SIGNED" -lt "$SIGNOFF_MIN_SQUADS" ]; then
+            echo "::error::only $SIGNED squads signed off (need $SIGNOFF_MIN_SQUADS for canary-50+)"
+            exit 1
+          fi
+
+      - name: P0 open count
+        run: |
+          P0_OPEN=$(grep -cE '^\| \*?\*?(GATE|SEC)-[A-Z0-9-]+\*?\*? .*\| P0 .*\| ☐' "$GATE_DOC" || echo 0)
+          echo "P0 open: $P0_OPEN"
+          if [ "$P0_OPEN" -gt 0 ]; then
+            echo "::error::$P0_OPEN P0 row(s) open — promotion blocked"
+            grep -E '^\| \*?\*?(GATE|SEC)-[A-Z0-9-]+\*?\*? .*\| P0 .*\| ☐' "$GATE_DOC"
+            exit 1
+          fi
+
+      - name: P1 binding on canary-50+
+        if: contains(fromJSON('["canary-50","prod-100"]'), inputs.stage)
+        run: |
+          P1_OPEN=$(grep -cE '^\| \*?\*?(GATE|SEC)-[A-Z0-9-]+\*?\*? .*\| P1 .*\| ☐' "$GATE_DOC" || echo 0)
+          if [ "$P1_OPEN" -gt 0 ]; then
+            echo "::error::$P1_OPEN P1 row(s) open and stage is ${{ inputs.stage }} — binding"
+            exit 1
+          fi
+
+      - name: G7 — no raw provider literal escapes in apps/web/src/
+        run: |
+          # GATE-CO-08-extension: server-side *_internal naming for raw provider strings.
+          # Frontend must NEVER carry raw provider reason literals — only coarsened DOM values.
+          HITS=$(grep -rnE '\b(reason_unmapped|rawProviderReason)\b' apps/web/src/ \
+            --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' \
+            2>/dev/null | grep -vE '(\.test\.|\.spec\.|__tests__|/tests/)' || true)
+          if [ -n "$HITS" ]; then
+            echo "::error::G7: raw provider reason literals leaked outside tests (GATE-CO-08-extension)"
+            echo "$HITS"
+            exit 1
+          fi
