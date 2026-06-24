@@ -1,6 +1,7 @@
-// WI-CANCEL-1 error envelope (frozen per DR-CANCEL-002 R1+R3).
+// WI-CANCEL-1 error envelope (frozen per DR-CANCEL-002 R1+R3, amended DR-CANCEL-005).
 //
-// Dev seam #6 owed by app-dev: app-dev OWNS Codes constants + NotCancellable(reason) mapper.
+// Dev seam #6 owed by app-dev: app-dev OWNS Codes constants + NotCancellable(reason) mapper
+// + Reasons.All / Reasons.ForEnum() projection helpers.
 // QA + review-deployment consume from here — NO string duplication anywhere (refunds v1b pattern).
 //
 // Wire shape matches refunds v1b (UX freeze 4c84355): nested error object with `code` discriminator.
@@ -10,6 +11,10 @@
 //
 // SEC-CANCEL-001: NEVER include CancelType, ProviderRefundId, providerReason, or any
 // re_xxx / pi_xxx / cancel_xxx provider IDs. GATE-CANCEL-06 + GATE-CANCEL-07 enforce.
+
+using System;
+using System.Collections.Generic;
+using System.Collections.Immutable;
 
 namespace TravelAssistant.Checkout.Cancellation;
 
@@ -39,6 +44,47 @@ public static class CancelErrorEnvelope
         public const string OrderIdRequired               = "ORDER_ID_REQUIRED";
         public const string Unauthorized                  = "UNAUTHORIZED";
         public const string OrderNotFound                 = "ORDER_NOT_FOUND";                // Pending orders → 404 (IDOR-safe, R1)
+    }
+
+    /// <summary>
+    /// DR-CANCEL-005 — projection helpers for the 4-value cancellation reason enum.
+    /// Lets QA's drift gate compare <c>CancelIneligibilityReason</c> to wire strings
+    /// without re-implementing snake_case conversion or duplicating the value list.
+    /// App-dev OWNS this projection; if the enum and string surfaces ever disagree,
+    /// QA's <c>ProviderReasonMappingTests</c> cross-surface gate fails the build.
+    /// </summary>
+    public static class Reasons
+    {
+        /// <summary>
+        /// Frozen ordered list of the 4 snake_case wire values, in server precedence order:
+        /// AlreadyCanceled &gt; AlreadyRefunded &gt; WindowExpired &gt; FulfillmentInProgress.
+        /// Mirrors <c>CancelIneligibilityReason</c> 1:1. Build break on any additions
+        /// here without a matching enum value (and vice versa).
+        /// </summary>
+        public static readonly IReadOnlyList<string> All = ImmutableArray.Create(
+            Codes.ReasonAlreadyCanceled,
+            Codes.ReasonAlreadyRefunded,
+            Codes.ReasonWindowExpired,
+            Codes.ReasonFulfillmentInProgress);
+
+        /// <summary>
+        /// Maps a <see cref="CancelIneligibilityReason"/> enum value to its snake_case wire string.
+        /// Single source of truth for the enum→string projection — callers (server impls, QA tests,
+        /// review-deployment assertions) MUST use this helper instead of re-implementing
+        /// PascalCase→snake_case conversion. Throws on unknown values so new enum members
+        /// added without a matching string fail loudly.
+        /// </summary>
+        public static string ForEnum(CancelIneligibilityReason reason) => reason switch
+        {
+            CancelIneligibilityReason.AlreadyCanceled       => Codes.ReasonAlreadyCanceled,
+            CancelIneligibilityReason.AlreadyRefunded       => Codes.ReasonAlreadyRefunded,
+            CancelIneligibilityReason.WindowExpired         => Codes.ReasonWindowExpired,
+            CancelIneligibilityReason.FulfillmentInProgress => Codes.ReasonFulfillmentInProgress,
+            _ => throw new ArgumentOutOfRangeException(
+                    nameof(reason),
+                    reason,
+                    "Unmapped CancelIneligibilityReason value. Add a case to CancelErrorEnvelope.Reasons.ForEnum() and a matching Codes.Reason* constant."),
+        };
     }
 
     /// <summary>
