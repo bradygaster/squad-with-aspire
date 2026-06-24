@@ -82,9 +82,13 @@
 |---|---|---|---|
 | `idle` | Trigger button visible | — | — |
 | `confirming` | Modal open | — | Modal Cancel (autofocus) |
-| `pending` | Inline status: "Cancellation requested. Confirming with provider…" + spinner | polite | NO focus move (live region only) |
+| `pending` | **Modal unmounts on Confirm click.** Inline status: "Cancellation requested. Confirming with provider…" + spinner | polite | NO focus move (live region only) |
 | `terminal-success` | Inline status: "Order canceled. A refund is being processed." Refund CTA appears below. | polite | NO focus move (live region only) — per focus policy §3 happy-path rule |
-| `terminal-error` | Inline status: "Cancellation failed: {message}." Retry button. | assertive (role=alert) mirror + h1-equivalent focus target | Focus moves to status heading |
+| `terminal-error` | Inline status: "Cancellation failed: {message}." Retry button. | assertive (role=alert) mirror + h1-equivalent focus target | Focus moves to `cancel-status-heading` |
+
+**MODAL LIFECYCLE — explicit:** The cancel modal unmounts on `confirming → pending` transition (i.e., the instant the user clicks Confirm and the POST is dispatched). The inline status surface (`cancel-status-inline`) becomes visible in the page body. The modal does NOT persist through `pending`, `terminal-success`, or `terminal-error` states. This is the **opposite** of RefundModal v1, which stays mounted through all states and focuses the retry button on `failed`. Divergence is intentional for cancel v1 — cancel is a longer-running, server-authoritative operation (DR-CANCEL-003 R4' refund-on-rejection path needs page-level inline rendering anyway), so the modal exits once the user commits and the page owns the rest of the journey. Refunds v1.1 may align to this pattern; not in scope for v1.
+
+QA test contract enforces this: `await expect(page.locator('[data-testid="cancel-modal"]')).toHaveCount(0)` after Confirm. Frontend MUST unmount, not hide via CSS.
 
 - `data-testid="cancel-status-inline"` on wrapper.
 - `data-testid="poll-state"` with `data-state="pending|terminal-success|terminal-error|idle"` (per QA enforcement bundle).
@@ -152,8 +156,8 @@ Per the binding note in `qa-testhook-patches.md` and QA's `focus-live-region-enf
 | `cancel-modal-cancel-button` | Cancel button in modal | `confirming` |
 | `cancel-modal-confirm-button` | Confirm button in modal | `confirming` |
 | `cancel-status-inline` | Inline status wrapper | `pending|terminal-*|reconciliation_delayed` |
-| `cancel-status-heading` | Status h-element (focus target on terminal-error) | `terminal-error` |
-| `cancel-retry-button` | Retry button | `terminal-error` (retryable codes only) |
+| `cancel-status-heading` | Status h-element (page-level; focus target on terminal-error). MUST be an `<h1>` per focus-policy §3. | `terminal-error` |
+| `cancel-retry-button` | Retry button (inside `cancel-status-inline`, NOT inside modal — modal is unmounted by this point) | `terminal-error` (retryable codes only) |
 | `cancel-error-message` | Inner error-copy span | `terminal-error` |
 | `poll-state` (with `data-state`) | sr-only span mirroring state machine | `pending|terminal-success|terminal-error|reconciliation_delayed|idle` |
 | `live-region-status` | Polite live region | All (page-level, reused) |
