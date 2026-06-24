@@ -1,0 +1,132 @@
+# Drop-in REPLACEMENT for the existing `security-gate` job in
+# .github/workflows/checkout-canary-promote.yml
+#
+# Supersedes preprod-security-gate-wireup/security-gate-job.yml (commit 719b563).
+# Reflects PREPROD-SECURITY-GATE.md v2 from security-hardening squad:
+#   - 14 P0 gates (was 8) — adds GATE-CO-06a/b/c/d/e + GATE-CO-08
+#   - 6 P1 gates (was 5)  — adds GATE-CO-06b-canary (7-day burn-in)
+#
+# Wired as `needs: [security-gate]` on every promote-{dark,1,10,50,100} job.
+# Re-runs at every stage boundary — fail-closed, halts mid-rollout regressions.
+# Authoritative source: docs/security/preprod-security-gate.md (copied verbatim
+# from squads/security-hardening/artifacts/preprod-security-gate/PREPROD-SECURITY-GATE.md).
+#
+# Sign-off matrix expanded — QA-testing-squad now required (enforces GATE-CO-06a/b/e
+# via bundle 9 + GATE-CO-08 via bundle 7).
+
+  security-gate:
+    name: Pre-prod security gate (14 P0 / 6 P1)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      p0_open: ${{ steps.scan.outputs.p0_open }}
+      p1_open: ${{ steps.scan.outputs.p1_open }}
+      gate_doc_sha: ${{ steps.scan.outputs.gate_doc_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Verify gate doc present
+        run: |
+          set -euo pipefail
+          if [[ ! -f docs/security/preprod-security-gate.md ]]; then
+            echo "::error::docs/security/preprod-security-gate.md missing — copy from squads/security-hardening/artifacts/preprod-security-gate/PREPROD-SECURITY-GATE.md"
+            exit 1
+          fi
+
+      - name: P0/P1 open-item scan
+        id: scan
+        run: |
+          set -euo pipefail
+          GATE=docs/security/preprod-security-gate.md
+
+          # ----- P0 unchecked (any of GATE-1..8 or GATE-CO-06a..e or GATE-CO-08) -----
+          # Matches lines like:  | **GATE-3** ... ☐
+          #                      | **GATE-CO-06b** ... ☐
+          #                      | **GATE-CO-08** ... ☐
+          P0_OPEN=$(grep -cE '^\| \*\*GATE-([1-8]|CO-0(6[a-e]|8))\*\* .*☐' "$GATE" || true)
+          P1_OPEN=$(grep -cE '^\| \*\*GATE-CO-06b-canary\*\* .*☐|^\| \*\*GATE-(9|10|11|12|13)\*\* .*☐' "$GATE" || true)
+
+          # ----- Anti-delete-file: gate doc must not be removed in this PR -----
+          if ! git cat-file -e "${{ github.event.pull_request.base.sha || github.event.before }}:$GATE" 2>/dev/null; then
+            echo "::warning::Gate doc is new on this branch (no base to diff against)"
+          else
+            BASE_LINES=$(git show "${{ github.event.pull_request.base.sha || github.event.before }}:$GATE" | wc -l)
+            HEAD_LINES=$(wc -l < "$GATE")
+            if (( HEAD_LINES < BASE_LINES * 80 / 100 )); then
+              echo "::error::Gate doc shrunk >20% ($BASE_LINES -> $HEAD_LINES lines). Anti-delete-file tripped."
+              exit 1
+            fi
+          fi
+
+          # ----- Anti-delete-row: count of GATE-* rows must not decrease -----
+          BASE_ROWS=$(git show "${{ github.event.pull_request.base.sha || github.event.before }}:$GATE" 2>/dev/null | grep -cE '^\| \*\*GATE-' || echo "0")
+          HEAD_ROWS=$(grep -cE '^\| \*\*GATE-' "$GATE")
+          if (( HEAD_ROWS < BASE_ROWS )); then
+            echo "::error::GATE row count dropped: $BASE_ROWS -> $HEAD_ROWS. Anti-delete-row tripped."
+            exit 1
+          fi
+          if (( HEAD_ROWS < 20 )); then
+            echo "::error::Gate doc has only $HEAD_ROWS GATE-* rows — expected ≥20 (14 P0 + 6 P1). Drift detected."
+            exit 1
+          fi
+
+          # ----- 90-day staleness cap -----
+          LAST_MOD_DAYS=$(( ( $(date +%s) - $(git log -1 --format=%ct -- "$GATE") ) / 86400 ))
+          if (( LAST_MOD_DAYS > 90 )); then
+            echo "::error::Gate doc unchanged for ${LAST_MOD_DAYS} days (cap 90). Re-review required."
+            exit 1
+          fi
+
+          # ----- Sign-off matrix enforcement (binding at ≥50% stages) -----
+          # Matrix must list: security, app-dev, qa, infra (4 squads, no self-approval)
+          REQUIRED_SIGNERS=("security-hardening" "application-development" "quality-testing" "infrastructure")
+          for s in "${REQUIRED_SIGNERS[@]}"; do
+            if ! grep -qiE "sign-off.*${s}|${s}.*sign-off" "$GATE"; then
+              echo "::error::Sign-off matrix missing required squad: $s"
+              exit 1
+            fi
+          done
+
+          echo "p0_open=${P0_OPEN}" >> "$GITHUB_OUTPUT"
+          echo "p1_open=${P1_OPEN}" >> "$GITHUB_OUTPUT"
+          echo "gate_doc_sha=$(git log -1 --format=%H -- "$GATE")" >> "$GITHUB_OUTPUT"
+
+          echo "::notice::Gate doc OK. P0 open=${P0_OPEN}, P1 open=${P1_OPEN}"
+
+      - name: P0 block check
+        env:
+          STAGE: ${{ inputs.stage }}
+        run: |
+          set -euo pipefail
+          P0=${{ steps.scan.outputs.p0_open }}
+          if (( P0 > 0 )); then
+            echo "::error::${P0} P0 gate item(s) unchecked — promotion to stage '${STAGE}' BLOCKED"
+            echo "Open the gate doc and resolve every ☐ in GATE-1..8 and GATE-CO-06a/b/c/d/e/08 before re-running."
+            exit 1
+          fi
+          echo "::notice::All 14 P0 gates ✅ — promotion to '${STAGE}' permitted"
+
+      - name: P1 advisory check (warn-only at <50%, error at ≥50%)
+        env:
+          STAGE: ${{ inputs.stage }}
+        run: |
+          set -euo pipefail
+          P1=${{ steps.scan.outputs.p1_open }}
+          case "${STAGE}" in
+            dark|canary-1|canary-10)
+              if (( P1 > 0 )); then
+                echo "::warning::${P1} P1 advisory item(s) open at stage ${STAGE} (advisory until 50%)"
+              fi
+              ;;
+            canary-50|prod-100)
+              if (( P1 > 0 )); then
+                echo "::error::${P1} P1 item(s) open at stage ${STAGE} — binding at ≥50%"
+                exit 1
+              fi
+              ;;
+          esac

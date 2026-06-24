@@ -1,0 +1,124 @@
+# Bundle 9a — Synthetic-canary smoke + 7-day burn-in wireup for GATE-CO-06b-canary.
+#
+# Adds a post-deploy job to .github/workflows/checkout-canary-promote.yml.
+# Runs on every stage AFTER deploy, BEFORE traffic-shift gate completes.
+#
+# Implements security-hardening's SEC-CHK-008-R6-canary-bundle-9a-spec.md:
+#   1. Polls Application Insights for ≥40 canary samples in 10-min window.
+#      Fails promotion if canary not emitting (silent-failure detector).
+#   2. Tracks 7-day burn-in clock for GATE-CO-06b-canary P1 → P0 promotion.
+#
+# QA owns CanaryRunbookSmokeTest.ps1 (per spec §"Test files QA owns").
+# This wiring assumes the script lives at: tests/canary/CanaryRunbookSmokeTest.ps1
+# If QA ships it elsewhere, update CANARY_SCRIPT_PATH below.
+
+  canary-smoke-bundle-9a:
+    name: Canary p99 timing-leak smoke (bundle 9a)
+    needs: [promote-${{ inputs.stage }}]
+    if: ${{ inputs.stage != 'dark' }}  # dark has no live traffic → no canary samples to poll
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      CANARY_SCRIPT_PATH: tests/canary/CanaryRunbookSmokeTest.ps1
+      MIN_SAMPLES: 40
+      WINDOW_MINUTES: 10
+      P99_TIMING_LEAK_FLOOR_MS: 1000  # FloorMs(800) + buffer(200) per GATE-CO-06b
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Wait for canary samples to populate
+        run: sleep 600  # 10-min window for Application Insights ingestion
+
+      - name: Run QA-owned canary smoke test
+        shell: pwsh
+        run: |
+          if (-not (Test-Path $env:CANARY_SCRIPT_PATH)) {
+            Write-Error "Canary smoke script missing at $env:CANARY_SCRIPT_PATH — QA must ship per SEC-CHK-008-R6 spec"
+            exit 1
+          }
+          & $env:CANARY_SCRIPT_PATH `
+            -WorkspaceId "${{ secrets.LOG_ANALYTICS_WORKSPACE }}" `
+            -MinSamples $env:MIN_SAMPLES `
+            -WindowMinutes $env:WINDOW_MINUTES `
+            -P99FloorMs $env:P99_TIMING_LEAK_FLOOR_MS `
+            -Stage "${{ inputs.stage }}"
+
+      - name: Rollback on canary failure
+        if: failure()
+        uses: ./.github/actions/checkout-rollback
+        with:
+          stage: ${{ inputs.stage }}
+          reason: 'canary-smoke-bundle-9a-failed'
+
+  canary-burnin-tracker:
+    name: GATE-CO-06b-canary 7-day burn-in clock
+    needs: [canary-smoke-bundle-9a]
+    if: ${{ inputs.stage == 'canary-10' || inputs.stage == 'canary-50' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check or open burn-in tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Find existing burn-in tracking issue
+          ISSUE=$(gh issue list --label "gate:co-06b-canary,burn-in" --state open --json number,createdAt --jq '.[0]' || echo "")
+
+          if [[ -z "$ISSUE" ]]; then
+            # Open one — start the 7-day clock
+            gh issue create \
+              --title "GATE-CO-06b-canary: 7-day burn-in started ($(date -u +%Y-%m-%d))" \
+              --label "gate:co-06b-canary,burn-in,sla:7d" \
+              --body "$(cat <<EOF
+          ## Burn-in clock started
+
+          - **Start date (UTC):** $(date -u +%Y-%m-%dT%H:%M:%SZ)
+          - **Required clean window:** 7 days zero alerts in canary slot
+          - **Then:** monitor promotes to prod slot for 7 more days
+          - **Total:** 14 days clean before P1 gate flips ☐ → ✅
+          - **Triggering deploy:** ${{ github.sha }}
+          - **Stage:** ${{ inputs.stage }}
+
+          ## Tracking
+
+          When the 7-day canary burn-in completes clean, comment on this issue with evidence
+          (alert query results from Log Analytics) and the prod-slot monitor takes over.
+
+          When 14 days total complete clean, open a PR flipping the row in
+          \`docs/security/preprod-security-gate.md\`:
+          \`\`\`
+          | **GATE-CO-06b-canary** | ... | ☐ | → | ✅ |
+          \`\`\`
+
+          Close this issue with the PR link.
+
+          ## Rollback
+
+          Any alert during burn-in resets the clock. Open a new issue, close this one with
+          \`burn-in-reset\` label.
+          EOF
+          )"
+            echo "::notice::Opened burn-in tracking issue"
+          else
+            CREATED=$(echo "$ISSUE" | jq -r '.createdAt')
+            NUM=$(echo "$ISSUE" | jq -r '.number')
+            DAYS_ELAPSED=$(( ( $(date +%s) - $(date -d "$CREATED" +%s) ) / 86400 ))
+            echo "::notice::Burn-in issue #${NUM} active for ${DAYS_ELAPSED} days (target: 7 canary + 7 prod = 14 total clean)"
+
+            # Append per-deploy heartbeat comment
+            gh issue comment "$NUM" --body "Heartbeat: stage=${{ inputs.stage }}, sha=${{ github.sha }}, smoke=PASS, day=${DAYS_ELAPSED}/14"
+          fi
