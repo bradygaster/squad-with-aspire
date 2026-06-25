@@ -10,6 +10,11 @@ dist/
 # Squad session state (ephemeral, never commit)
 squads/**/session-state/
 squads/**/.squad/session-store.db*
+squads/**/.squad/agents/**/history.md
+squads/**/artifacts/
+
+# Playwright CLI skill scratch (snapshots, console/network logs)
+.playwright-cli/
 
 # IDE
 .vs/

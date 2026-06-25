@@ -226,16 +226,16 @@ public class RoleDescriptionTests
     public void AppDevRole_MentionsWritingCode()
     {
         var role = SquadRegistry.GetRoleDescription("application-development-squad");
-        Assert.Contains("WRITE CODE", role);
-        Assert.Contains("pull requests", role);
+        Assert.Contains("code", role!);
+        Assert.Contains("PRs", role!);
     }
 
     [Fact]
     public void IdeationRole_MentionsFilingIssues()
     {
         var role = SquadRegistry.GetRoleDescription("ideation-research-planning-squad");
-        Assert.Contains("issues", role);
-        Assert.Contains("plan", role);
+        Assert.Contains("issues", role!);
+        Assert.Contains("plan", role!);
     }
 
     [Fact]
@@ -243,7 +243,7 @@ public class RoleDescriptionTests
     {
         var role = SquadRegistry.GetRoleDescription("quality-testing-squad");
         Assert.Contains("tests", role!);
-        Assert.Contains("bugs", role!);
+        Assert.Contains("bug", role!);
     }
 }
 

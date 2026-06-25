@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react'
+import { useMemo } from 'react'
 import type { SquadMessage } from '../types'
 import { MessageBubble } from './MessageBubble'
 

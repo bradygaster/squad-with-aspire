@@ -53,6 +53,21 @@ public sealed class CoordinatorService : BackgroundService
             _logger = logger;
         }
 
+    /// <summary>
+    /// Clears every piece of per-conversation in-memory state — persistent SDK sessions,
+    /// already-answered message tracking, turn budgets, and pending cycle outputs. Called
+    /// when the user changes the target repo so the next chat starts clean.
+    /// </summary>
+    public void ResetState()
+    {
+        var sessionCount = _sessions.Count;
+        _sessions.Clear();
+        _respondedMessages.Clear();
+        _turnUsage.Clear();
+        _cycleOutputs.Clear();
+        _logger.LogInformation("Coordinator in-memory state reset ({SessionsDisposed} squad sessions cleared)", sessionCount);
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await Task.Delay(300, stoppingToken);
@@ -606,29 +621,30 @@ public sealed class CoordinatorService : BackgroundService
         var budgetBlock = turnsRemaining switch
         {
             0 => """
-            ⚠️ FINAL TURN: This is your LAST action. You MUST produce a concrete deliverable NOW — file an issue, submit a PR, write a spec, or create a test. No planning, no "next steps". Ship something.
+            ⚠️ FINAL DELIVERABLE: This is your last opportunity to ship work. Dispatch your remaining team members in parallel via `task` to produce concrete artifacts (issue, PR, spec, tests). No planning, no "next steps". Ship something.
 
             """,
             1 => """
-            ⏰ BUDGET: 1 turn remaining after this one. Wrap up — produce your final artifact on the next turn.
+            ⏰ DELIVERABLES BUDGET: 1 more artifact after this one. Dispatch via `task` and synthesize the result.
 
             """,
             _ => $"""
-            BUDGET: You have {turnsRemaining + 1} turns remaining (of {MaxTurnsPerSquad} total). Each turn must produce forward progress. Don't deliberate — act.
+            DELIVERABLES BUDGET: produce up to {turnsRemaining + 1} concrete artifacts (each via a `task` dispatch to a team member). Subagent spawns are cheap — use them freely, in parallel when concerns are independent.
 
             """
         };
 
         return $"""
-            {repoInstruction}{knowledgeBlock}{roleBlock}{phaseBlock}{budgetBlock}Respond as {squadName}.
+            {repoInstruction}{knowledgeBlock}{roleBlock}{phaseBlock}{budgetBlock}Produce ONE final reply as {squadName}. To produce it, dispatch your team members via the `task` tool (one per concern, in parallel when independent). Doing work yourself in the coordinator (`gh`, `powershell`, file edits, web fetches) is FORBIDDEN — those tools belong to the subagents you spawn. Your job is to dispatch + synthesize, not to do the work inline.
 
             {contextBlock}
 
             RULES:
-            - You get ONE reply to this message. Make it count — be thoughtful and complete.
-            - PRODUCE ARTIFACTS, not commentary. File issues, write code, create PRs, write tests. Don't just describe what should be done — do it.
+            - DELEGATE BY DEFAULT: for any task needing domain expertise (review, design, code, security, tests, planning, deployment), call the `task` tool with `agent_type: "general-purpose"` and a `prompt` that names the persona from your charter (e.g. "You are Worf, the Security & Reliability Reviewer …"). Inline work is the anti-pattern.
+            - You get ONE final assistant message. Inside it you may dispatch as many subagents as needed; the final message is your synthesis of their results.
+            - PRODUCE ARTIFACTS via your subagents — file issues, write code, create PRs, write tests. Subagents do the doing; you do the routing and synthesis.
             - If a message requires NO action from you (status updates, acknowledgments, "nothing to do"), DO NOT REPLY. Silence is correct.
-            - To send a message to another squad, CALL the squad_send_message tool. Writing "@squad" in text does nothing.
+            - To send a message to another squad, CALL the `squad_send_message` tool. Writing "@squad" in text does nothing. This is for cross-squad handoff only — it is NOT a substitute for dispatching your own team members via `task`.
             - Do NOT send acknowledgment messages like "got it", "nothing actionable", "my turn is done". Just stay silent.
             - Only reply if you have substantive content to add or a task to hand off.
             - After your reply, if you learned anything new (decisions, context, technical details, project state), append a <knowledge> block with a brief summary of what you learned. Example:

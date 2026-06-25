@@ -10,4 +10,9 @@ public interface ISquadConfigStore
     Task SetAsync(string key, string value, CancellationToken ct = default);
     Task DeleteAsync(string key, CancellationToken ct = default);
     Task<IReadOnlyDictionary<string, string>> GetAllAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// Removes every configuration entry. Used when resetting the app to a new target repo.
+    /// </summary>
+    Task ClearAllAsync(CancellationToken ct = default);
 }
