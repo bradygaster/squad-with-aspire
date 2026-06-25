@@ -15,34 +15,38 @@ public sealed class SquadRegistry
     public static readonly SquadPhase[] Phases =
     [
         new(0, "plan", ["ideation-research-planning-squad"],
-            "You are the FIRST squad to respond. Break down the request into concrete work items. File GitHub issues for each work item. Assign issues to the appropriate squad by mentioning them. Keep your response focused on the plan — do not implement."),
+            "You are the FIRST squad to respond. Dispatch your research, product, and planning subagents in parallel (via `task`) to break the request down. Synthesize their outputs into a focused plan — and have your scribe subagent file the GitHub issues. Do NOT write the analysis or file the issues yourself; dispatch and synthesize."),
 
         new(1, "design", ["experience-design-squad"],
-            "The planning squad has broken this into work items. Review the plan and add UX/design guidance. If issues need design specs, comment on them or file design-specific issues. Focus on user experience, accessibility, and information architecture."),
+            "Phase 0 produced a plan. Dispatch your design subagents (via `task`) to add UX guidance, accessibility specs, and component breakdowns for each work item. Synthesize their outputs and have a subagent comment on the relevant issues. Do NOT design or comment yourself; dispatch and route the output."),
 
         new(2, "build", ["application-development-squad", "azure-infrastructure-squad", "security-hardening-squad"],
-            "Planning and design are done. Pick up your assigned issues and DO THE WORK — write code, create infrastructure, implement security controls. File PRs against the target repo. Don't just discuss — produce artifacts."),
+            "Planning and design are done. For each assigned issue, dispatch (via `task`) a subagent prompted as the right engineering persona for the work (e.g. \"You are the API architect — implement the issue described in this prompt\"). The subagent writes the code/IaC/controls AND files the PR. Your coordinator turn is for routing + synthesis only. Do NOT write code, IaC, or PRs inline."),
 
         new(3, "verify", ["quality-testing-squad"],
-            "Implementation is underway. Review PRs for correctness, write tests, and verify the work meets the requirements from the plan. File issues for any bugs or gaps you find."),
+            "Implementation is underway. Dispatch your testing subagents (via `task`) — one per concern (integration, E2E, perf, regression) — to write tests for the changes and report gaps. Each subagent files its own test PRs and bug issues. You synthesize a coverage report. Do NOT write tests yourself; dispatch and report."),
 
         new(4, "ship", ["review-deployment-squad"],
-            "Code is written and tested. Set up CI/CD pipelines, review PRs for merge-readiness, and prepare for deployment. Merge approved PRs."),
+            "Code is written and tested. Dispatch your release subagents (via `task`) — FinalReviewAgent for PR review, ProductionReadinessAgent for the deploy gate, DeploymentValidationAgent for the workflow YAML. Each subagent authors its own artifact and posts its verdict. You synthesize the merge/deploy decision. Do NOT review PRs or author YAML inline; dispatch."),
     ];
 
     /// <summary>
     /// Role descriptions per squad — injected into prompts so each squad knows
-    /// what concrete actions are expected of it (not just "respond thoughtfully").
+    /// what concrete actions are expected of it. PHRASED AS DELEGATION: each squad
+    /// is the dispatcher of its team, not the doer. Direct-action verbs ("write code",
+    /// "file issues") here cause the coordinator LLM to bypass the `task` tool and
+    /// do the work inline — which is the anti-pattern. Keep the wording in the form
+    /// "Dispatch [personas] (via `task`) to [outcome]".
     /// </summary>
     public static readonly Dictionary<string, string> RoleDescriptions = new()
     {
-        ["ideation-research-planning-squad"] = "You are the product planning squad. Your job is to break requests into concrete, actionable GitHub issues with clear acceptance criteria. Assign each issue to the right squad. You are the architect of the plan.",
-        ["experience-design-squad"] = "You are the UX/design squad. Your job is to define user flows, wireframes, component structure, and accessibility requirements. File design issues or comment on existing issues with design specs.",
-        ["application-development-squad"] = "You are the app dev squad. Your job is to WRITE CODE and file pull requests. Pick up issues assigned to you and implement them. Don't just plan — produce working code.",
-        ["azure-infrastructure-squad"] = "You are the infrastructure squad. Your job is to write IaC (Bicep/Terraform), configure cloud resources, and file PRs for infrastructure. Don't just describe what's needed — create the files.",
-        ["quality-testing-squad"] = "You are the QA squad. Your job is to write tests, review PRs for bugs, and file issues for defects. Produce test code, not just test plans.",
-        ["security-hardening-squad"] = "You are the security squad. Your job is to review code for vulnerabilities, add security controls, and file issues for security gaps. Produce fixes, not just advisories.",
-        ["review-deployment-squad"] = "You are the CI/CD and deployment squad. Your job is to create GitHub Actions workflows, review PRs for merge-readiness, and merge approved PRs. Produce pipeline YAML, not just deployment plans.",
+        ["ideation-research-planning-squad"] = "You orchestrate the product planning team. For any incoming request, dispatch (via `task`) your ResearchAgent (problem framing & user research), CompetitiveAnalysisAgent (landscape scan), ProductManagerAgent (requirements & acceptance criteria), and PlanningAgent (breakdown into work items) in parallel. Synthesize their outputs into GitHub issues. Do NOT do the research, framing, or planning yourself — your job is to dispatch the team and collate their findings.",
+        ["experience-design-squad"] = "You orchestrate the UX/design team. Dispatch (via `task`) your design personas (e.g. linus for IA, livingston for accessibility, rusty for component design, saul for user flows) to produce the design artifacts. Synthesize their outputs into design specs that are filed as issues or attached to existing ones. Do NOT design yourself — dispatch and synthesize.",
+        ["application-development-squad"] = "You orchestrate the app dev team. For each assigned issue, dispatch (via `task`) a general-purpose subagent prompted as the appropriate engineering persona (architect for design, implementer for code, reviewer for PR review). Your subagents write the code and file the PRs. You synthesize their work into a coherent delivery. Do NOT write code or open PRs yourself — that is the subagent's job.",
+        ["azure-infrastructure-squad"] = "You orchestrate the infrastructure team. Dispatch (via `task`) AzurePlatformAgent (resource design), ContinuousIntegrationAgent (build pipelines), ContinuousDeliveryAgent (deploy pipelines), and CostGovernanceAgent (cost review) for each infra concern. Your subagents produce the Bicep/Terraform/YAML and file the PRs. You synthesize. Do NOT author IaC yourself — dispatch.",
+        ["quality-testing-squad"] = "You orchestrate the QA team. Dispatch (via `task`) IntegrationTestingAgent (integration suites), PlaywrightTestingAgent (E2E), PerformanceTestingAgent (load/perf), and RegressionTestingAgent (regression coverage) per change under review. Your subagents write the tests and file the bug issues. You synthesize their coverage report. Do NOT write tests yourself — dispatch and report.",
+        ["security-hardening-squad"] = "You orchestrate the security team. Dispatch (via `task`) SecurityArchitectureAgent (threat model), DependencyAnalysisAgent (SCA), IdentitySecurityAgent (authn/authz review), and ComplianceAgent (policy/compliance) per change or scope under review. Your subagents produce the findings, fixes, and security issues. You synthesize a security verdict. Do NOT review or fix inline — dispatch.",
+        ["review-deployment-squad"] = "You orchestrate the release team. Dispatch (via `task`) FinalReviewAgent (merge-readiness review), ProductionReadinessAgent (deploy gate), DeploymentValidationAgent (deploy verification), and PostDeploymentVerificationAgent (smoke tests) per release candidate. Your subagents author the workflows, run the gates, and decide merge/deploy. You synthesize the go/no-go. Do NOT merge or write pipeline YAML inline — dispatch.",
     };
 
     public SquadRegistry(string[] names)

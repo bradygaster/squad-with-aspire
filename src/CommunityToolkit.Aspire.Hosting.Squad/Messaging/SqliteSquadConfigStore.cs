@@ -106,6 +106,17 @@ public sealed class SqliteSquadConfigStore : ISquadConfigStore
         return result;
     }
 
+    public async Task ClearAllAsync(CancellationToken ct = default)
+    {
+        using var activity = ActivitySource.StartActivity("squad.config.clear", ActivityKind.Internal);
+
+        await using var connection = await OpenAsync(ct);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM config;";
+        var deletedCount = await command.ExecuteNonQueryAsync(ct);
+        activity?.SetTag("config.deleted_count", deletedCount);
+    }
+
     private async Task<SqliteConnection> OpenAsync(CancellationToken ct)
     {
         var connection = new SqliteConnection(_connectionString);

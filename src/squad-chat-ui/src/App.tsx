@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import './App.css'
-import { clearMessages as clearMessagesApi, getSquads, sendMessage } from './api'
+import { clearMessages as clearMessagesApi, getSquads, resetAllState, sendMessage } from './api'
 import { ChatThread } from './components/ChatThread'
 import { ComposeBar } from './components/ComposeBar'
 import { RepoPickerModal } from './components/RepoPickerModal'
@@ -11,7 +11,7 @@ import type { Squad, SquadMessage } from './types'
 // Generate a color from a squad name deterministically
 const PALETTE = ['#f4a261', '#5ad1e6', '#7bd88f', '#ff7aa2', '#e6c75a', '#d97af5', '#7af5b8', '#f28b82', '#81c995', '#aecbfa']
 
-function squadColor(name: string, index: number): string {
+function squadColor(_name: string, index: number): string {
   return PALETTE[index % PALETTE.length]
 }
 
@@ -45,7 +45,7 @@ function createLocalMessage(
   }
 }
 
-function App() {
+function ChatApp() {
   const [knownSquads, setKnownSquads] = useState<string[]>([])
   const [targetRepo, setTargetRepo] = useState<string | null>(null)
   const [sentMessages, setSentMessages] = useState<SquadMessage[]>([])
@@ -94,6 +94,31 @@ function App() {
   const handleRepoSelected = useCallback((repo: string) => {
     setTargetRepo(repo)
   }, [])
+
+  const [isChangingRepo, setIsChangingRepo] = useState(false)
+
+  const handleChangeRepo = useCallback(async () => {
+    const confirmed = window.confirm(
+      'Change target repo?\n\nThis will permanently delete all messages, every squad\u2019s accumulated knowledge, and reset all in-progress squad sessions. You\u2019ll be prompted to pick a new repo afterwards.',
+    )
+    if (!confirmed) return
+
+    setIsChangingRepo(true)
+    setErrorMessage(null)
+
+    try {
+      await resetAllState()
+      clearStreamedMessages()
+      setSentMessages([])
+      setWaitingForResponse(false)
+      setTargetRepo(null)
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : 'Unknown error'
+      setErrorMessage(`Failed to change repo. ${detail}`)
+    } finally {
+      setIsChangingRepo(false)
+    }
+  }, [clearStreamedMessages])
 
   const messages = useMemo(
     () =>
@@ -198,11 +223,24 @@ function App() {
           <p className="app-eyebrow">Inter-squad messaging</p>
           <h1>Squad chat</h1>
         </div>
-        <p className="app-subtitle">
-          {targetRepo
-            ? `Working on ${targetRepo}`
-            : 'Coordinate a multi-agent team from one live thread with streaming updates.'}
-        </p>
+        <div className="app-header-meta">
+          <p className="app-subtitle">
+            {targetRepo
+              ? `Working on ${targetRepo}`
+              : 'Coordinate a multi-agent team from one live thread with streaming updates.'}
+          </p>
+          {targetRepo && (
+            <button
+              type="button"
+              className="change-repo-button"
+              onClick={handleChangeRepo}
+              disabled={isChangingRepo}
+              title="Reset everything (messages, knowledge, sessions) and pick a new target repo"
+            >
+              {isChangingRepo ? 'Resetting…' : 'Change repo'}
+            </button>
+          )}
+        </div>
       </header>
 
       <SquadPresenceBar squads={squads} />
@@ -220,6 +258,10 @@ function App() {
       <ComposeBar disabled={isSending} onSend={handleSend} squads={knownSquads} />
     </div>
   )
+}
+
+function App() {
+  return <ChatApp />
 }
 
 export default App

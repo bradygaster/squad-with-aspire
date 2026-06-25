@@ -99,7 +99,7 @@ export function RepoPickerModal({ onRepoSelected }: RepoPickerModalProps) {
         </form>
 
         <p className="repo-picker-hint">
-          You can change this later via the config API.
+          You can switch to a different repo any time via the &ldquo;Change repo&rdquo; button in the header.
         </p>
       </div>
     </div>

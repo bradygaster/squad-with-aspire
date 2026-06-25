@@ -84,6 +84,13 @@ export async function getAllConfig(): Promise<Record<string, string>> {
   return parseJsonResponse<Record<string, string>>(response)
 }
 
+export async function resetAllState(): Promise<void> {
+  const response = await fetch(buildUrl('/api/state/reset'), { method: 'POST' })
+  if (!response.ok) {
+    throw new Error(`Failed to reset state: ${response.status}`)
+  }
+}
+
 export async function getSquads(): Promise<string[]> {
   const response = await fetch(buildUrl('/api/squads'))
   return parseJsonResponse<string[]>(response)

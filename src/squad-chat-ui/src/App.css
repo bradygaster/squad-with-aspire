@@ -73,6 +73,45 @@ button {
   color: #b7bfdc;
 }
 
+.app-header-meta {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.app-header-meta .app-subtitle {
+  margin-top: 0;
+  flex: 1 1 auto;
+}
+
+.change-repo-button {
+  flex: 0 0 auto;
+  padding: 0.4rem 0.85rem;
+  background: rgba(255, 255, 255, 0.05);
+  color: #b7bfdc;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+
+.change-repo-button:hover:not(:disabled) {
+  background: rgba(116, 96, 255, 0.18);
+  border-color: rgba(116, 96, 255, 0.6);
+  color: #f5f7ff;
+}
+
+.change-repo-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .presence-bar {
   position: sticky;
   top: 0;
